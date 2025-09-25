@@ -17,11 +17,12 @@
     button { padding: 10px 14px; border-radius: 8px; border: 1px solid #0f766e; background:#0f766e; color:#fff; cursor: pointer; }
     button:disabled { opacity: .5; cursor: not-allowed; }
     .muted { color:#666; font-size: 0.9em; }
-    pre { background:#f7f7f7; padding:12px; border-radius:8px; overflow:auto; }
+    pre { background:#f7f7f7; padding:12px; border-radius:8px; overflow:auto; min-height: 120px; }
   </style>
 </head>
 <body>
   <h1>Fusion Suivi + Extraction → Google Sheet</h1>
+
   <div class="card">
     <p class="muted">Charge <b>2 fichiers .xlsx</b> (Suivi & Extraction). Le navigateur calcule <i>resultats</i> et <i>ML (×0.35)</i> puis envoie vers Google Sheets (Apps Script).</p>
   </div>
@@ -60,8 +61,10 @@
     <input id="gasUrl" style="width:100%" placeholder="https://script.google.com/macros/s/AKfycbxqCXzHjT94GsKTIMdjvVSKejeQrrxJyRVmiBFSKrXQp6DPJX3nWzcpe4iCYQROqrBq1A/exec" />
     <label>Shared Secret (sécurité)</label>
     <input id="secret" style="width:300px" type="password" placeholder="secret facultatif" />
-    <button id="runBtn">Lancer le traitement</button>
-    <div class="muted" style="margin-top:8px">Google Sheet cible (fixe) : <code>1AptbV2NbY0WQZpe_Xt1K2iVlDpgKADElamKQCg3GcXQ</code></div>
+    <!-- Fallback inline pour être sûr que le clic appelle la fonction même si addEventListener a échoué -->
+    <button id="runBtn" onclick="onRun()">Lancer le traitement</button>
+    <button id="testBtn" style="margin-left:8px;background:#155e75;border-color:#155e75" onclick="testConnexion()">Tester connexion</button>
+    <div class="muted" style="margin-top:8px">Google Sheet cible : <code>1AptbV2NbY0WQZpe_Xt1K2iVlDpgKADElamKQCg3GcXQ</code></div>
   </div>
 
   <div class="card">
@@ -69,8 +72,11 @@
     <pre id="log"></pre>
   </div>
 
+  <!-- CDN SheetJS en premier -->
   <script src="https://cdn.jsdelivr.net/npm/xlsx@0.18.5/dist/xlsx.full.min.js"></script>
+  <!-- Votre logique (doit exposer onRun/testConnexion en global) -->
   <script src="app.js"></script>
+
   <script>
     if ('serviceWorker' in navigator) {
       navigator.serviceWorker.register('./service-worker.js');
