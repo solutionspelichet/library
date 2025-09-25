@@ -1,4 +1,13 @@
 // Utils
+const r = await fetch(gasUrl, {
+  method: 'POST',
+  mode: 'cors',
+  redirect: 'follow',
+  credentials: 'omit',
+  headers: { 'Content-Type': 'application/json' },
+  body: JSON.stringify(payload)
+});
+
 const logEl = document.getElementById('log');
 const log = (m) => { logEl.textContent += m + '\n'; };
 const excelLetterToIndex = (L) => {
