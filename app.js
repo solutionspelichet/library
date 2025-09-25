@@ -1,4 +1,14 @@
 // --- helpers UI ---
+
+const resp = await fetch(gasUrl, {
+  method: 'POST',
+  mode: 'cors',
+  redirect: 'follow',
+  credentials: 'omit',
+  headers: { 'Content-Type': 'text/plain;charset=utf-8' }, // <-- évite le preflight
+  body: JSON.stringify(payload) // on envoie quand même du JSON, mais comme texte
+});
+
 const $ = (id) => document.getElementById(id);
 const logEl = $('log');
 const log = (m) => { console.log(m); logEl.textContent += m + '\n'; };
