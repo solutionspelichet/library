@@ -16,7 +16,9 @@ window.addEventListener('error', (e) => log('⛔ JS error: ' + (e?.error?.messag
 window.addEventListener('unhandledrejection', (e) => log('⛔ Promise rejection: ' + (e?.reason?.message || e.reason || e.toString())));
 
 // --- Config fixe (ton Sheet cible) ---
+// --- Config fixe ---
 const SHEET_ID = '1AptbV2NbY0WQZpe_Xt1K2iVlDpgKADElamKQCg3GcXQ';
+const GAS_URL  = 'https://script.google.com/macros/s/PUT_YOUR_WEB_APP_URL_HERE/exec'; // <-- mets ton /exec ici
 
 // Attache aussi via addEventListener (en plus de l’onclick inline dans index.html)
 document.addEventListener('DOMContentLoaded', () => {
@@ -50,12 +52,12 @@ async function onRun() {
 
     const sFile = $('suiviFile').files[0];
     const eFile = $('extractFile').files[0];
-    const gasUrl = $('gasUrl').value.trim();
+    const gasUrl = GAS_URL; // URL figée dans le code
     const secret = $('secret').value.trim();
 
     if (!sFile) { alert('Sélectionne le fichier de suivi (.xlsx)'); throw new Error('Suivi manquant'); }
     if (!eFile) { alert('Sélectionne le fichier d’extraction (.xlsx)'); throw new Error('Extraction manquante'); }
-    if (!gasUrl) { alert('Renseigne l’URL Apps Script Web App (/exec)'); throw new Error('URL Apps Script absente'); }
+   
 
     log('Lecture fichiers… (dans le navigateur)');
     const sWorkbook = await readWorkbook(sFile);
