@@ -19,6 +19,49 @@ document.addEventListener('DOMContentLoaded', () => {
   const tbtn = $('testBtn'); if (tbtn && !tbtn.onclick) tbtn.addEventListener('click', testConnexion);
 });
 
+
+// Convertit tout en AAAA-MM-JJ (gère ISO, JJ/MM/AAAA, JJ/MM/AAAA HH:MM, et numéros Excel)
+function parseDate(v) {
+  if (v == null || v === '') return null;
+
+  // 1) Numéro Excel (séries) -> Date
+  if (typeof v === 'number' && isFinite(v)) {
+    // Excel base 1899-12-30
+    const ms = Math.round((v - 25569) * 86400 * 1000);
+    const d = new Date(ms);
+    if (!isNaN(d)) return fmtYMD(d);
+  }
+
+  // 2) Chaîne ISO (2025-09-20, 2025-09-20T14:30)
+  if (typeof v === 'string' && /^\d{4}-\d{2}-\d{2}/.test(v)) {
+    const d = new Date(v);
+    if (!isNaN(d)) return fmtYMD(d);
+  }
+
+  // 3) Chaîne FR/EU: JJ/MM/AAAA (avec ou sans heure)
+  if (typeof v === 'string') {
+    const m = v.match(/^(\d{1,2})[\/\-\.](\d{1,2})[\/\-\.](\d{4})(?:\s+(\d{1,2}):(\d{2})(?::(\d{2}))?)?$/);
+    if (m) {
+      const [_, DD, MM, YYYY, hh='0', mm='0', ss='0'] = m;
+      const d = new Date(Number(YYYY), Number(MM)-1, Number(DD), Number(hh), Number(mm), Number(ss));
+      if (!isNaN(d)) return fmtYMD(d);
+    }
+  }
+
+  // 4) Dernier recours
+  const d = new Date(v);
+  return isNaN(d) ? null : fmtYMD(d);
+}
+
+function fmtYMD(d) {
+  const y = d.getFullYear();
+  const m = String(d.getMonth()+1).padStart(2,'0');
+  const day = String(d.getDate()).padStart(2,'0');
+  return `${y}-${m}-${day}`;
+}
+
+
+
 // Bouton TEST pour valider l’URL /exec sans charger de fichiers
 async function testConnexion(){
   try{
