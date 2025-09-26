@@ -1,50 +1,35 @@
 // =====================
-// app.js (PWA Frontend)
+// app.js (avec parsing FR des nombres & normalisation Contact)
 // =====================
 
-// --- Helpers UI & logs ---
 const $ = (id) => document.getElementById(id);
 const logEl = $('log');
 const log = (m) => { try { console.log(m); } catch(_){} if (logEl) logEl.textContent += m + '\n'; };
-const setBusy = (busy) => {
-  const b = $('runBtn');
-  if (b) { b.disabled = busy; b.textContent = busy ? 'Traitement en cours…' : 'Lancer le traitement'; }
-};
+const setBusy = (busy) => { const b=$('runBtn'); if(b){ b.disabled=busy; b.textContent = busy?'Traitement en cours…':'Lancer le traitement'; } };
 
-// Log des erreurs JS globales (visible à l’écran)
 window.addEventListener('error', (e) => log('⛔ JS error: ' + (e?.error?.message || e.message || e.toString())));
 window.addEventListener('unhandledrejection', (e) => log('⛔ Promise rejection: ' + (e?.reason?.message || e.reason || e.toString())));
 
-// --- Config fixe (ton Sheet cible) ---
-// --- Config fixe ---
 const SHEET_ID = '1AptbV2NbY0WQZpe_Xt1K2iVlDpgKADElamKQCg3GcXQ';
-const GAS_URL  = 'https://script.google.com/macros/s/AKfycbxqCXzHjT94GsKTIMdjvVSKejeQrrxJyRVmiBFSKrXQp6DPJX3nWzcpe4iCYQROqrBq1A/exec'; // <-- mets ton /exec ici
+// const GAS_URL = 'https://script.google.com/macros/s/AKfycbxqCXzHjT94GsKTIMdjvVSKejeQrrxJyRVmiBFSKrXQp6DPJX3nWzcpe4iCYQROqrBq1A/exec'; // si tu l’as figée
 
-// Attache aussi via addEventListener (en plus de l’onclick inline dans index.html)
 document.addEventListener('DOMContentLoaded', () => {
   log('✅ App prête. Sélectionne les 2 fichiers et renseigne l’URL Apps Script.');
   const btn = $('runBtn'); if (btn && !btn.onclick) btn.addEventListener('click', onRun);
   const tbtn = $('testBtn'); if (tbtn && !tbtn.onclick) tbtn.addEventListener('click', testConnexion);
 });
 
-// ------------------------------
-// Bouton TEST : ping du /exec
-// ------------------------------
 async function testConnexion(){
   try{
-    const gasUrl = $('gasUrl').value.trim();
+    const gasUrl = (typeof GAS_URL==='string' && GAS_URL) ? GAS_URL : $('gasUrl').value.trim();
     if(!gasUrl) { alert('Renseigne l’URL /exec de la Web App'); return; }
     log('Ping Apps Script…');
     const r = await fetch(gasUrl, { method:'GET' });
-    const t = await r.text();
-    log('Réponse GET: ' + t);
+    const t = await r.text(); log('Réponse GET: ' + t);
     if(!r.ok) alert('GET non OK: ' + r.status);
   }catch(e){ log('❌ Test: ' + e.message); alert(e.message); }
 }
 
-// ------------------------------
-// Lancer le traitement complet
-// ------------------------------
 async function onRun() {
   setBusy(true);
   try {
@@ -52,12 +37,12 @@ async function onRun() {
 
     const sFile = $('suiviFile').files[0];
     const eFile = $('extractFile').files[0];
-    const gasUrl = GAS_URL; // URL figée dans le code
+    const gasUrl = (typeof GAS_URL==='string' && GAS_URL) ? GAS_URL : $('gasUrl').value.trim();
     const secret = $('secret').value.trim();
 
     if (!sFile) { alert('Sélectionne le fichier de suivi (.xlsx)'); throw new Error('Suivi manquant'); }
     if (!eFile) { alert('Sélectionne le fichier d’extraction (.xlsx)'); throw new Error('Extraction manquante'); }
-   
+    if (!gasUrl) { alert('Renseigne l’URL Apps Script Web App (/exec)'); throw new Error('URL Apps Script absente'); }
 
     log('Lecture fichiers… (dans le navigateur)');
     const sWorkbook = await readWorkbook(sFile);
@@ -84,14 +69,12 @@ async function onRun() {
       mode: 'cors',
       redirect: 'follow',
       credentials: 'omit',
-      // Astuce anti-preflight : envoyer JSON en text/plain (Apps Script le parse quand même)
       headers: { 'Content-Type': 'text/plain;charset=utf-8' },
       body: JSON.stringify(payload)
     });
 
     const text = await resp.text();
     let json; try { json = JSON.parse(text); } catch { json = { raw:text }; }
-
     if (!resp.ok || !json.ok) throw new Error(json?.error || `Apps Script HTTP ${resp.status}`);
 
     log('✅ Écriture terminée');
@@ -111,44 +94,73 @@ async function onRun() {
   }
 }
 
-// ==================
-// Lecture / parsing
-// ==================
-async function readWorkbook(file) {
-  const data = await file.arrayBuffer();
-  return XLSX.read(data, { type: 'array' });
-}
-
-// 1ère feuille → AOA ; retire entête dupliquée (si présente) et dernière ligne
+// ===== I/O =====
+async function readWorkbook(file){ const data = await file.arrayBuffer(); return XLSX.read(data, { type:'array' }); }
 function cleanSheetToAOA(workbook) {
   const firstName = workbook.SheetNames[0];
   const sheet = workbook.Sheets[firstName];
   const aoa = XLSX.utils.sheet_to_json(sheet, { header: 1, raw: true });
   if (!aoa.length) return aoa;
-
   const header = aoa[0].map(x => (x==null?'':String(x).trim()));
   if (aoa.length >= 2) {
     const firstDataRow = aoa[1].map(x => (x==null?'':String(x).trim()));
-    if (arraysEqual(header, firstDataRow)) aoa.splice(1, 1);
+    if (arraysEqual(header, firstDataRow)) aoa.splice(1,1);
   }
   if (aoa.length >= 2) aoa.splice(aoa.length-1, 1);
   return aoa;
 }
-
 function arraysEqual(a,b){ return a.length===b.length && a.every((v,i)=>String(v).trim()===String(b[i]).trim()); }
+function aoaToObjects(aoa){ if(!aoa||!aoa.length) return []; const headers=aoa[0].map(h=>String(h||'').trim()); return aoa.slice(1).map(row=>{ const o={}; headers.forEach((h,i)=>o[h]=row[i]); return o; }); }
 
-// AOA → objets (entêtes = aoa[0])
-function aoaToObjects(aoa){
-  if(!aoa || !aoa.length) return [];
-  const headers = aoa[0].map(h => String(h||'').trim());
-  return aoa.slice(1).map(row => {
-    const o = {}; headers.forEach((h,i)=>o[h]=row[i]); return o;
-  });
+// ===== Parsing & normalisation =====
+function parseNumber(v){
+  if (v == null || v === '') return 0;
+  if (typeof v === 'number' && isFinite(v)) return v;
+  let s = String(v).trim();
+  // supprime espaces fines, normales, apostrophes, points d’agrégation
+  s = s.replace(/[\u202F\u00A0\s']/g, '');
+  // si deux séparateurs existent, garder la dernière comme décimale
+  const lastComma = s.lastIndexOf(',');
+  const lastDot = s.lastIndexOf('.');
+  if (lastComma > lastDot) {
+    // FR: remplacer tous les points (milliers), puis virgule -> point décimal
+    s = s.replace(/\./g, '').replace(',', '.');
+  } else if (lastDot > lastComma) {
+    // US: enlever virgules (milliers)
+    s = s.replace(/,/g, '');
+  } else {
+    // un seul séparateur potentiel: si c'est virgule → décimal
+    if (s.includes(',')) s = s.replace(',', '.');
+  }
+  const n = Number(s);
+  return isNaN(n) ? 0 : n;
 }
 
-// ======================
-// Traitements principaux
-// ======================
+// Convertit tout en AAAA-MM-JJ (gère ISO, JJ/MM/AAAA (HH:MM[:SS]), et numéros Excel)
+function parseDate(v) {
+  if (v == null || v === '') return null;
+  if (typeof v === 'number' && isFinite(v)) {
+    const ms = Math.round((v - 25569) * 86400 * 1000); // base Excel 1899-12-30
+    const d = new Date(ms);
+    if (!isNaN(d)) return fmtYMD(d);
+  }
+  if (typeof v === 'string' && /^\d{4}-\d{2}-\d{2}/.test(v)) {
+    const d = new Date(v); if (!isNaN(d)) return fmtYMD(d);
+  }
+  if (typeof v === 'string') {
+    const m = v.match(/^(\d{1,2})[\/\-\.](\d{1,2})[\/\-\.](\d{4})(?:\s+(\d{1,2}):(\d{2})(?::(\d{2}))?)?$/);
+    if (m) {
+      const [_, DD, MM, YYYY, hh='0', mm='0', ss='0'] = m;
+      const d = new Date(Number(YYYY), Number(MM)-1, Number(DD), Number(hh), Number(mm), Number(ss));
+      if (!isNaN(d)) return fmtYMD(d);
+    }
+  }
+  const d = new Date(v);
+  return isNaN(d) ? null : fmtYMD(d);
+}
+function fmtYMD(d){ const y=d.getFullYear(), m=String(d.getMonth()+1).padStart(2,'0'), day=String(d.getDate()).padStart(2,'0'); return `${y}-${m}-${day}`; }
+
+// ===== Traitements principaux =====
 function processWorkbook(workbook, refs) {
   const aoa = cleanSheetToAOA(workbook);
   const rows = aoaToObjects(aoa);
@@ -160,25 +172,27 @@ function processWorkbook(workbook, refs) {
   const colUser = colByLetter('user');
   const colSum  = colByLetter('sum');
   const colDate = colByLetter('date');
-  const colHead = colByLetter('head'); // pour éventuelles autres synthèses
 
-  // Dédoublonnage (garde le 1er)
   const seen = new Set(); const dedupe = [];
-  for (const r of rows) { const k = r[colKey]; if (!seen.has(k)) { seen.add(k); dedupe.push(r); } }
+  for (const r of rows) {
+    const k = r[colKey];
+    if (!seen.has(k)) { seen.add(k); dedupe.push(r); }
+  }
 
-  // Agrégation par jour (date = colDate tronquée au jour AAAA-MM-JJ)
+  // Agrégation par jour avec normalisation Contact & parsing numéric FR
   const perDayMap = new Map(); const usersSet = new Set(); const daysSet = new Set();
   for (const r of dedupe) {
-    const u = r[colUser]; usersSet.add(u);
+    const userRaw = r[colUser];
+    const u = (userRaw==null ? '' : String(userRaw)).trim(); // normalisation Contact
+    usersSet.add(u);
     const d = parseDate(r[colDate]); if (!d) continue; daysSet.add(d);
-    const val = Number(r[colSum] ?? 0) || 0;
+    const val = parseNumber(r[colSum]); // <--- FR safe
     const key = `${u}||${d}`;
     perDayMap.set(key, (perDayMap.get(key)||0) + val);
   }
 
   const days = Array.from(daysSet).sort();
   const headersOut = ['Contact', ...days.map(d => `nombre colonne carton ${d}`)];
-  // debug: vois les dates détectées dans la console
   console.log('Dates détectées:', days);
 
   const rowsOut = [];
@@ -193,44 +207,41 @@ function processWorkbook(workbook, refs) {
 
 function emptyTable(){ return { headers:['Contact'], rows:[] } }
 
-// =====================
-// Outils de fusion/pivot
-// =====================
-function excelLetterToIndex(L) {
-  L = String(L || '').trim().toUpperCase();
-  let idx = 0;
-  for (const ch of L) idx = idx * 26 + (ch.charCodeAt(0) - 64);
-  return idx - 1;
-}
+// ===== Fusion & ML =====
+function excelLetterToIndex(L){ L=String(L||'').trim().toUpperCase(); let idx=0; for(const ch of L) idx = idx*26 + (ch.charCodeAt(0)-64); return idx-1; }
 
-// Addition alignée sur Contact & nom de colonne
 function mergeTablesByContactAndHeaders(A, B) {
   const headers = Array.from(new Set([...(A.headers||[]), ...(B.headers||[])]));
-  let ci = headers.indexOf('Contact');
-  if (ci > 0) { headers.splice(ci,1); headers.unshift('Contact'); }
-
+  const ci = headers.indexOf('Contact'); if (ci>0){ headers.splice(ci,1); headers.unshift('Contact'); }
   const idxA = indexMap(A.headers||[]), idxB = indexMap(B.headers||[]);
-  const contacts = new Set([...(A.rows||[]).map(r=>r[0]), ...(B.rows||[]).map(r=>r[0])]);
+
+  // normalise les noms de contact lors de la comparaison
+  const norm = (s) => (s==null ? '' : String(s)).trim();
+
+  const contacts = new Set([...(A.rows||[]).map(r=>norm(r[0])), ...(B.rows||[]).map(r=>norm(r[0]))]);
+  // reindex par contact normalisé
+  const mapA = new Map(); (A.rows||[]).forEach(r => mapA.set(norm(r[0]), r));
+  const mapB = new Map(); (B.rows||[]).forEach(r => mapB.set(norm(r[0]), r));
 
   const outRows = [];
   for (const c of Array.from(contacts).sort()) {
     const row = Array(headers.length).fill(0); row[0] = c;
-    const ra = (A.rows||[]).find(r => r[0]===c); if (ra) sumRowInto(row, ra, headers, idxA);
-    const rb = (B.rows||[]).find(r => r[0]===c); if (rb) sumRowInto(row, rb, headers, idxB);
-    for (let i=1;i<row.length;i++) row[i] = Number(row[i]||0);
+    const ra = mapA.get(c), rb = mapB.get(c);
+    if (ra) sumRowIntoParsed(row, ra, headers, idxA);
+    if (rb) sumRowIntoParsed(row, rb, headers, idxB);
+    for (let i=1;i<row.length;i++) row[i] = parseNumber(row[i]);
     outRows.push(row);
   }
   return { headers, rows: outRows };
 }
 
 function indexMap(h){ const m={}; (h||[]).forEach((name,i)=>m[name]=i); return m; }
-
-function sumRowInto(targetRow, srcRow, headers, srcIdxMap){
+function sumRowIntoParsed(targetRow, srcRow, headers, srcIdxMap){
   for (let i=1;i<headers.length;i++){
     const name = headers[i];
     const si = srcIdxMap[name];
-    const v = (si==null) ? 0 : Number(srcRow[si]||0);
-    targetRow[i] = Number(targetRow[i]||0) + (isNaN(v)?0:v);
+    const v = (si==null) ? 0 : parseNumber(srcRow[si]);
+    targetRow[i] = parseNumber(targetRow[i]) + v;
   }
 }
 
@@ -238,56 +249,12 @@ function multiplyValues(table, k){
   const headers = table.headers.slice();
   const rows = table.rows.map(r=>{
     const out = r.slice();
-    for (let i=1;i<out.length;i++) out[i] = Number(out[i]||0)*k;
+    for (let i=1;i<out.length;i++) out[i] = parseNumber(out[i]) * k;
     return out;
   });
   return { headers, rows };
 }
 
-// ===================
-// Parsing des dates
-// ===================
-
-// Convertit tout en AAAA-MM-JJ (gère ISO, JJ/MM/AAAA, JJ/MM/AAAA HH:MM[:SS], et numéros Excel)
-function parseDate(v) {
-  if (v == null || v === '') return null;
-
-  // 1) Numéro Excel (séries)
-  if (typeof v === 'number' && isFinite(v)) {
-    // Excel base 1899-12-30
-    const ms = Math.round((v - 25569) * 86400 * 1000);
-    const d = new Date(ms);
-    if (!isNaN(d)) return fmtYMD(d);
-  }
-
-  // 2) Chaîne ISO (2025-09-20 ou 2025-09-20T14:30)
-  if (typeof v === 'string' && /^\d{4}-\d{2}-\d{2}/.test(v)) {
-    const d = new Date(v);
-    if (!isNaN(d)) return fmtYMD(d);
-  }
-
-  // 3) Chaîne FR/EU: JJ/MM/AAAA (avec ou sans heure)
-  if (typeof v === 'string') {
-    const m = v.match(/^(\d{1,2})[\/\-\.](\d{1,2})[\/\-\.](\d{4})(?:\s+(\d{1,2}):(\d{2})(?::(\d{2}))?)?$/);
-    if (m) {
-      const [_, DD, MM, YYYY, hh='0', mm='0', ss='0'] = m;
-      const d = new Date(Number(YYYY), Number(MM)-1, Number(DD), Number(hh), Number(mm), Number(ss));
-      if (!isNaN(d)) return fmtYMD(d);
-    }
-  }
-
-  // 4) Dernier recours
-  const d = new Date(v);
-  return isNaN(d) ? null : fmtYMD(d);
-}
-
-function fmtYMD(d) {
-  const y = d.getFullYear();
-  const m = String(d.getMonth()+1).padStart(2,'0');
-  const day = String(d.getDate()).padStart(2,'0');
-  return `${y}-${m}-${day}`;
-}
-
-// Expose en global pour les onclick inline (fallback)
+// Expose en global pour fallback onclick
 window.onRun = onRun;
 window.testConnexion = testConnexion;
