@@ -18,7 +18,7 @@ window.addEventListener('unhandledrejection', (e) => log('⛔ Promise rejection:
 // --- Config fixe (ton Sheet cible) ---
 // --- Config fixe ---
 const SHEET_ID = '1AptbV2NbY0WQZpe_Xt1K2iVlDpgKADElamKQCg3GcXQ';
-const GAS_URL  = 'https://script.google.com/macros/s/PUT_YOUR_WEB_APP_URL_HERE/exec'; // <-- mets ton /exec ici
+const GAS_URL  = 'https://script.google.com/macros/s/AKfycbxqCXzHjT94GsKTIMdjvVSKejeQrrxJyRVmiBFSKrXQp6DPJX3nWzcpe4iCYQROqrBq1A/exec'; // <-- mets ton /exec ici
 
 // Attache aussi via addEventListener (en plus de l’onclick inline dans index.html)
 document.addEventListener('DOMContentLoaded', () => {
