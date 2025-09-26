@@ -76,14 +76,18 @@ async function onRun() {
     });
 
     const text = await resp.text();
-    let json; try { json = JSON.parse(text); } catch { json = { raw:text }; }
-    if (!resp.ok) throw new Error(json?.error || `Apps Script HTTP ${resp.status}`);
+let json; try { json = JSON.parse(text); } catch { json = { raw:text }; }
+if (!resp.ok || !json.ok) throw new Error(json?.error || `Apps Script HTTP ${resp.status}`);
 
-    log('✅ Écriture terminée: ' + JSON.stringify(json));
-    alert('Terminé ! Vérifie le Google Sheet.');
-  } catch (e) {
-    log('❌ ' + e.message);
-    alert('Erreur : ' + e.message);
+log('✅ Écriture terminée');
+if (json.spreadsheetUrl) log('Sheet URL: ' + json.spreadsheetUrl);
+if (json.meta) {
+  const m = json.meta;
+  if (m.resultats) log(`resultats -> headers: ${m.resultats.headers}, rows: ${m.resultats.rows}`);
+  if (m.ML)       log(`ML        -> headers: ${m.ML.headers}, rows: ${m.ML.rows}`);
+}
+alert('Terminé ! Ouvre le lien du Google Sheet affiché dans le journal.');
+
   } finally {
     setBusy(false);
     log('--- Fin ---');
