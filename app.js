@@ -9,7 +9,7 @@ window.addEventListener('error', (e) => log('⛔ JS error: ' + (e?.error?.messag
 window.addEventListener('unhandledrejection', (e) => log('⛔ Promise rejection: ' + (e?.reason?.message || e.reason || e.toString())));
 
 const excelLetterToIndex = (L) => { L=String(L||'').trim().toUpperCase(); let idx=0; for (const ch of L) idx = idx*26 + (ch.charCodeAt(0)-64); return idx-1; };
-const parseDate = (v) => { const d = new Date(v); if (isNaN(d)) return null; const y=d.getFullYear(), m=String(d.getMonth()+1).padStart(2,'0'), dd=String(d.getDate()).padStart(2,'0'); return `${y}-${m}-${dd}`; };
+
 const SHEET_ID = '1AptbV2NbY0WQZpe_Xt1K2iVlDpgKADElamKQCg3GcXQ';
 
 // Attache aussi via addEventListener (deux ceintures / bretelles)
