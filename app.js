@@ -157,11 +157,19 @@ function processWorkbook(workbook, refs) {
   const colDate = colByLetter('date');
 
   // Dédoublonnage (garde le 1er)
-  const seen = new Set(); const dedupe = [];
-  for (const r of rows) {
-    const k = r[colKey];
-    if (!seen.has(k)) { seen.add(k); dedupe.push(r); }
+  const seen = new Set(); 
+const dedupe = [];
+for (const r of rows) {
+  const kRaw = r[colKey];
+  const k = (kRaw == null ? '' : String(kRaw)).trim();
+  if (!k) {
+    // pas de clé → on garde la ligne telle quelle (pas de dédoublonnage)
+    dedupe.push(r);
+  } else if (!seen.has(k)) {
+    seen.add(k);
+    dedupe.push(r);
   }
+}
 
   // Agrégation par jour (date = colDate tronquée AAAA-MM-JJ)
   const perDayMap = new Map(); const usersSet = new Set(); const daysSet = new Set();
