@@ -6,20 +6,17 @@
 const $ = (id) => document.getElementById(id);
 const logEl = $('log');
 const log = (m) => { try { console.log(m); } catch(_){} if (logEl) logEl.textContent += m + '\n'; };
-const setBusy = (busy) => {
-  const b = $('runBtn');
-  if (b) { b.disabled = busy; b.textContent = busy ? 'Traitement en cours…' : 'Lancer le traitement'; }
-};
+const setBusy = (busy) => { const b = $('runBtn'); if (b) { b.disabled = busy; b.textContent = busy ? 'Traitement en cours…' : 'Lancer le traitement'; } };
 
-// Log des erreurs JS globales (visible à l’écran)
+// Log erreurs visibles
 window.addEventListener('error', (e) => log('⛔ JS error: ' + (e?.error?.message || e.message || e.toString())));
 window.addEventListener('unhandledrejection', (e) => log('⛔ Promise rejection: ' + (e?.reason?.message || e.reason || e.toString())));
 
-// --- Config fixe (ton Sheet cible + URL Apps Script) ---
+// --- Config fixe ---
 const SHEET_ID = '1AptbV2NbY0WQZpe_Xt1K2iVlDpgKADElamKQCg3GcXQ';
-const GAS_URL  = 'https://script.google.com/macros/s/AKfycbwO0P3Yo5kw9PPriJPXzUMipBrzlGTR_r-Ff6OyEUnsNu-I9q-rESbBq7l2m6KLA3RJ/exec'; // <-- remplace par ton /exec
+const GAS_URL  = 'https://script.google.com/macros/s/AKfycbwO0P3Yo5kw9PPriJPXzUMipBrzlGTR_r-Ff6OyEUnsNu-I9q-rESbBq7l2m6KLA3RJ/exec'; // <— remplace
 
-// (optionnel) mémorise le secret localement
+// (optionnel) mémoriser le secret
 document.addEventListener('DOMContentLoaded', () => {
   log('✅ App prête. Sélectionne les 2 fichiers.');
   const saved = localStorage.getItem('PWA_SECRET');
@@ -31,23 +28,17 @@ document.addEventListener('DOMContentLoaded', () => {
   if ($('secret')) $('secret').addEventListener('change', e => localStorage.setItem('PWA_SECRET', e.target.value));
 });
 
-// ------------------------------
-// Bouton TEST : ping du /exec
-// ------------------------------
+// Test GET (peut échouer à cause de CORS ; juste indicatif)
 async function testConnexion(){
   try{
     if(!GAS_URL) { alert('Définis GAS_URL dans app.js'); return; }
     log('Ping Apps Script…');
-    const r = await fetch(GAS_URL, { method:'GET' });
-    const t = await r.text();
-    log('Réponse GET: ' + t);
-    if(!r.ok) alert('GET non OK: ' + r.status);
+    const r = await fetch(GAS_URL, { method:'GET', mode:'no-cors' });
+    log('GET envoyé (no-cors). Si besoin, vérifie dans Apps Script > Exécutions.');
   }catch(e){ log('❌ Test: ' + e.message); alert(e.message); }
 }
 
-// ------------------------------
-// Lancer le traitement complet
-// ------------------------------
+// Lancer le traitement
 async function onRun() {
   setBusy(true);
   try {
@@ -69,7 +60,7 @@ async function onRun() {
     const sData = processWorkbook(sWorkbook, { key:'s_key', user:'s_user', sum:'s_sum', date:'s_date', head:'s_head' });
     const eData = processWorkbook(eWorkbook, { key:'e_key', user:'e_user', sum:'e_sum', date:'e_date', head:'e_head' });
 
-    log('Calcul resultats (addition alignée) …');
+    log('Calcul resultats (addition alignée)…');
     const resultats = mergeTablesByContactAndHeaders(sData.tableau, eData.tableau);
     const ml = multiplyValues(resultats, 0.35);
 
@@ -81,29 +72,18 @@ async function onRun() {
     };
 
     log('Envoi vers Google Sheets (Apps Script)…');
-    const resp = await fetch(GAS_URL, {
+    // IMPORTANT: no-cors => on n’essaie pas de lire la réponse
+    await fetch(GAS_URL, {
       method: 'POST',
-      mode: 'cors',
+      mode: 'no-cors',             // <-- évite CORS; la réponse est "opaque"
       redirect: 'follow',
       credentials: 'omit',
-      // Astuce anti-preflight : envoyer JSON en text/plain (Apps Script le parse quand même)
       headers: { 'Content-Type': 'text/plain;charset=utf-8' },
       body: JSON.stringify(payload)
     });
 
-    const text = await resp.text();
-    let json; try { json = JSON.parse(text); } catch { json = { raw:text }; }
-
-    if (!resp.ok || !json.ok) throw new Error(json?.error || `Apps Script HTTP ${resp.status}`);
-
-    log('✅ Écriture terminée');
-    if (json.spreadsheetUrl) log('Sheet URL: ' + json.spreadsheetUrl);
-    if (json.meta) {
-      const m = json.meta;
-      if (m.resultats) log(`resultats -> headers: ${m.resultats.headers}, rows: ${m.resultats.rows}`);
-      if (m.ML)       log(`ML        -> headers: ${m.ML.headers}, rows: ${m.ML.rows}`);
-    }
-    alert('Terminé ! Ouvre le lien du Google Sheet depuis le Journal.');
+    log('✅ Requête envoyée (no-cors). Vérifie le Google Sheet (onglets "resultats" et "ML").');
+    alert('Envoi effectué. Ouvre le Google Sheet pour vérifier.');
   } catch (e) {
     log('❌ ' + e.message);
     alert('Erreur : ' + e.message);
@@ -121,8 +101,7 @@ async function readWorkbook(file) {
   return XLSX.read(data, { type: 'array' });
 }
 
-// 1ère feuille → AOA ; retire entête dupliquée (si présente) et supprime la dernière
-// ligne UNIQUEMENT si c'est clairement un "TOTAL"
+// 1ère feuille → AOA ; supprime entête dupliquée ; supprime dernière ligne UNIQUEMENT si c’est un TOTAL
 function cleanSheetToAOA(workbook) {
   const firstName = workbook.SheetNames[0];
   const sheet = workbook.Sheets[firstName];
@@ -131,7 +110,7 @@ function cleanSheetToAOA(workbook) {
 
   const header = aoa[0].map(x => (x==null?'':String(x).trim()));
 
-  // en-tête dupliquée juste après l'entête
+  // entête dupliquée (ligne 2 == entête)
   if (aoa.length >= 2) {
     const firstDataRow = aoa[1].map(x => (x==null?'':String(x).trim()));
     if (arraysEqual(header, firstDataRow)) aoa.splice(1, 1);
@@ -221,7 +200,6 @@ function excelLetterToIndex(L) {
   return idx - 1;
 }
 
-// Addition alignée sur Contact & nom de colonne
 function mergeTablesByContactAndHeaders(A, B) {
   const headers = Array.from(new Set([...(A.headers||[]), ...(B.headers||[])]));
   const ci = headers.indexOf('Contact'); if (ci>0){ headers.splice(ci,1); headers.unshift('Contact'); }
@@ -266,45 +244,33 @@ function multiplyValues(table, k){
 }
 
 // ===================
-// Parsing des nombres
+// Parsing nombres/dates
 // ===================
 function parseNumber(v){
   if (v == null || v === '') return 0;
   if (typeof v === 'number' && isFinite(v)) return v;
   let s = String(v).trim();
-  // supprime espaces fines/insécables, espaces, apostrophes
-  s = s.replace(/[\u202F\u00A0\s']/g, '');
-  // si deux séparateurs existent, garde le dernier comme décimal
+  s = s.replace(/[\u202F\u00A0\s']/g, ''); // espaces fines, insécables, apostrophes
   const lastComma = s.lastIndexOf(',');
   const lastDot = s.lastIndexOf('.');
-  if (lastComma > lastDot) {
-    // FR: points = milliers, virgule = décimal
-    s = s.replace(/\./g, '').replace(',', '.');
-  } else if (lastDot > lastComma) {
-    // US: virgules = milliers
-    s = s.replace(/,/g, '');
-  } else {
-    if (s.includes(',')) s = s.replace(',', '.');
-  }
+  if (lastComma > lastDot) { s = s.replace(/\./g, '').replace(',', '.'); }
+  else if (lastDot > lastComma) { s = s.replace(/,/g, ''); }
+  else { if (s.includes(',')) s = s.replace(',', '.'); }
   const n = Number(s);
   return isNaN(n) ? 0 : n;
 }
 
-// ===================
-// Parsing des dates
-// ===================
-// Convertit en AAAA-MM-JJ (ISO local), gère ISO, JJ/MM/AAAA (±heure), et numéros Excel
 function parseDate(v) {
   if (v == null || v === '') return null;
 
-  // 1) Numéro Excel (séries)
+  // Numéro Excel
   if (typeof v === 'number' && isFinite(v)) {
     const ms = Math.round((v - 25569) * 86400 * 1000); // base Excel 1899-12-30
     const d = new Date(ms);
     if (!isNaN(d)) return fmtYMD(d);
   }
 
-  // 2) ISO-like: construire en local
+  // ISO-like en local
   if (typeof v === 'string') {
     let m = v.match(/^(\d{4})-(\d{2})-(\d{2})(?:[ T](\d{2})(?::(\d{2})(?::(\d{2}))?)?)?/);
     if (m) {
@@ -312,7 +278,7 @@ function parseDate(v) {
       const d = new Date(Number(YYYY), Number(MM)-1, Number(DD), Number(hh), Number(mm), Number(ss));
       if (!isNaN(d)) return fmtYMD(d);
     }
-    // 3) JJ/MM/AAAA (±heure)
+    // JJ/MM/AAAA
     m = v.match(/^(\d{1,2})[\/\-\.](\d{1,2})[\/\-\.](\d{4})(?:\s+(\d{1,2}):(\d{2})(?::(\d{2}))?)?$/);
     if (m) {
       const [_, DD, MM, YYYY, hh='0', mm='0', ss='0'] = m;
@@ -321,15 +287,12 @@ function parseDate(v) {
     }
   }
 
-  // 4) Dernier recours
+  // fallback
   const d = new Date(v);
   return isNaN(d) ? null : fmtYMD(d);
 }
-function fmtYMD(d) {
-  const y = d.getFullYear(), m = String(d.getMonth()+1).padStart(2,'0'), day = String(d.getDate()).padStart(2,'0');
-  return `${y}-${m}-${day}`;
-}
+function fmtYMD(d){ const y=d.getFullYear(), m=String(d.getMonth()+1).padStart(2,'0'), day=String(d.getDate()).padStart(2,'0'); return `${y}-${m}-${day}`; }
 
-// Expose en global (fallback onclick dans index.html)
+// Expose global (fallback onclick dans index.html)
 window.onRun = onRun;
 window.testConnexion = testConnexion;
