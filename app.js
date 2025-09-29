@@ -17,7 +17,7 @@ window.addEventListener('unhandledrejection', (e) => log('⛔ Promise rejection:
 
 // --- Config fixe (ton Sheet cible + URL Apps Script) ---
 const SHEET_ID = '1AptbV2NbY0WQZpe_Xt1K2iVlDpgKADElamKQCg3GcXQ';
-const GAS_URL  = 'https://script.google.com/macros/s/PUT_YOUR_WEB_APP_URL_HERE/exec'; // <-- remplace par ton /exec
+const GAS_URL  = 'https://script.google.com/macros/s/AKfycbwO0P3Yo5kw9PPriJPXzUMipBrzlGTR_r-Ff6OyEUnsNu-I9q-rESbBq7l2m6KLA3RJ/exec'; // <-- remplace par ton /exec
 
 // (optionnel) mémorise le secret localement
 document.addEventListener('DOMContentLoaded', () => {
