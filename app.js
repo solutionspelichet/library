@@ -101,6 +101,29 @@ async function readWorkbook(file) {
   return XLSX.read(data, { type: 'array' });
 }
 
+// Détecte si le classeur est en base "date1904" (Excel Mac)
+function getWorkbookDate1904(workbook){
+  try { return !!(workbook && workbook.Workbook && workbook.Workbook.WBProps && workbook.Workbook.WBProps.date1904); }
+  catch { return false; }
+}
+
+// Petit log de contrôle du dernier jour
+function debugLastDay(label, perDayMap){
+  try{
+    const days = Array.from(new Set(Array.from(perDayMap.keys()).map(k => k.split('||')[1]))).sort();
+    if (!days.length) { log(`ℹ️ ${label}: aucune date détectée`); return; }
+    const last = days[days.length - 1];
+    let total = 0, count = 0;
+    for (const [k, v] of perDayMap.entries()) {
+      const d = k.split('||')[1];
+      if (d === last) { total += Number(v||0); count++; }
+    }
+    log(`ℹ️ ${label} – dernier jour: ${last} | total=${total} | occurrences=${count}`);
+  }catch(e){}
+}
+
+
+
 // 1ère feuille → AOA ; supprime entête dupliquée ; supprime dernière ligne UNIQUEMENT si c’est un TOTAL
 function cleanSheetToAOA(workbook) {
   const firstName = workbook.SheetNames[0];
@@ -116,24 +139,27 @@ function cleanSheetToAOA(workbook) {
     if (arraysEqual(header, firstDataRow)) aoa.splice(1, 1);
   }
 
-  // détecter si la dernière ligne est un TOTAL
+  // détecter si la dernière ligne est un TOTAL (cherche "total" dans TOUTE la ligne)
   if (aoa.length >= 2) {
     const last = aoa[aoa.length - 1];
-    const firstCell = (last[0] == null ? '' : String(last[0])).trim().toLowerCase();
-    const looksLikeTotalLabel = /total|totaux|somme|sum|grand total|subtotal/.test(firstCell);
+    const hasTotalWord = last.some(cell => {
+      const s = (cell==null ? '' : String(cell)).trim().toLowerCase();
+      return /(^|[^a-z])total(s)?([^a-z]|$)|totaux|somme|sum|grand total|subtotal/.test(s);
+    });
 
     let numericCount = 0, nonEmptyCount = 0;
-    for (let i = 1; i < last.length; i++) {
+    for (let i = 0; i < last.length; i++) {
       const v = last[i];
       if (v !== null && v !== '') nonEmptyCount++;
       const n = typeof v === 'number' ? v : Number(String(v).replace(/\s/g,'').replace(',', '.'));
       if (!isNaN(n)) numericCount++;
     }
-    const looksLikeTotalsRow = looksLikeTotalLabel || (numericCount >= Math.max(1, nonEmptyCount - 1) && nonEmptyCount > 0);
+    const looksLikeTotalsRow = hasTotalWord || (numericCount >= Math.max(1, nonEmptyCount - 1) && nonEmptyCount > 0);
     if (looksLikeTotalsRow) aoa.splice(aoa.length - 1, 1);
   }
   return aoa;
 }
+
 function arraysEqual(a,b){ return a.length===b.length && a.every((v,i)=>String(v).trim()===String(b[i]).trim()); }
 function aoaToObjects(aoa){
   if(!aoa || !aoa.length) return [];
@@ -144,7 +170,10 @@ function aoaToObjects(aoa){
 // ======================
 // Traitements principaux
 // ======================
-function processWorkbook(workbook, refs) {
+// AVANT : function processWorkbook(workbook, refs) {
+// APRÈS :
+function processWorkbook(workbook, refs, is1904=false) {
+
   const aoa = cleanSheetToAOA(workbook);
   const rows = aoaToObjects(aoa);
   if (!rows.length) return { tableau: emptyTable() };
@@ -268,12 +297,14 @@ function parseNumber(v){
   return isNaN(n) ? 0 : n;
 }
 
-function parseDate(v) {
+function parseDate(v, date1904=false) {
   if (v == null || v === '') return null;
 
   // Numéro Excel
   if (typeof v === 'number' && isFinite(v)) {
-    const ms = Math.round((v - 25569) * 86400 * 1000); // base Excel 1899-12-30
+    // Ajuste pour 1904 si nécessaire (+1462 jours)
+    const serial = date1904 ? (v + 1462) : v;
+    const ms = Math.round((serial - 25569) * 86400 * 1000); // base Excel 1899-12-30
     const d = new Date(ms);
     if (!isNaN(d)) return fmtYMD(d);
   }
@@ -299,6 +330,7 @@ function parseDate(v) {
   const d = new Date(v);
   return isNaN(d) ? null : fmtYMD(d);
 }
+
 function fmtYMD(d){ const y=d.getFullYear(), m=String(d.getMonth()+1).padStart(2,'0'), day=String(d.getDate()).padStart(2,'0'); return `${y}-${m}-${day}`; }
 
 // Expose global (fallback onclick dans index.html)
