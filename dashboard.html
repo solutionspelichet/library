@@ -2,48 +2,141 @@
 <html lang="fr">
 <head>
   <meta charset="utf-8" />
-  <title>Dashboard – ML par équipe</title>
+  <title>Pelichet • Dashboard ML</title>
   <meta name="viewport" content="width=device-width,initial-scale=1" />
+  <link rel="icon" href="assets/logo-pelichet.png">
   <style>
-    body{ font-family: system-ui, -apple-system, Segoe UI, Roboto, sans-serif; margin: 20px; }
-    h1{ margin: 0 0 12px; }
-    .row{ display: flex; gap: 20px; align-items: center; flex-wrap: wrap; }
-    label{ font-size: 14px; }
-    input[type=text]{ padding: 6px 8px; font-size: 14px; width: 540px; max-width: 100%; }
-    button, a.button{ padding: 8px 12px; font-size: 14px; border-radius: 8px; border: 1px solid #ccc; background: #f5f5f5; text-decoration: none; color: #000; }
-    button:hover, a.button:hover{ background: #eee; }
-    #log{ white-space: pre-wrap; background: #fafafa; border: 1px dashed #ccc; padding: 8px; font-size: 12px; max-height: 180px; overflow:auto; }
-    table{ border-collapse: collapse; margin-top: 16px; }
-    th, td{ border: 1px solid #ddd; padding: 6px 8px; font-size: 13px; text-align: right; }
-    th:first-child, td:first-child{ text-align: left; }
-    #chartWrap{ max-width: 1100px; }
+    :root{
+      --pel-orange:#F07A24;      /* orange Pelichet */
+      --pel-black:#262626;       /* anthracite */
+      --pel-grey:#f6f6f7;        /* fond doux */
+      --pel-border:#e6e6e8;
+      --pel-card:#ffffff;
+    }
+    html,body{height:100%}
+    body{
+      margin:0; padding:0 20px 40px;
+      background:var(--pel-grey);
+      color:var(--pel-black);
+      font-family:"Trebuchet MS", Trebuchet, Arial, sans-serif;
+    }
+    /* Header */
+    .appbar{
+      position:sticky; top:0; z-index:10;
+      background:linear-gradient(180deg,#fff, #fff0);
+      backdrop-filter:saturate(1.2) blur(6px);
+      padding:14px 0 8px; margin-bottom:8px;
+    }
+    .brand{
+      display:flex; align-items:center; gap:12px;
+    }
+    .brand img{ height:40px; width:auto }
+    .brand h1{
+      margin:0; font-size:22px; font-weight:700; letter-spacing:.2px;
+    }
+    .brand small{ color:#6b6b6b; font-weight:600 }
+
+    /* Admin panel (caché par défaut) */
+    .admin{ display:none; margin-top:12px; padding:12px; border:1px dashed var(--pel-border); background:#fff; border-radius:10px}
+    .admin .row{ display:flex; gap:10px; flex-wrap:wrap; align-items:center}
+    .admin label{ font-size:13px; color:#666 }
+    .admin input[type=text]{ padding:8px 10px; border:1px solid var(--pel-border); border-radius:8px; min-width:420px}
+    .btn{ padding:8px 12px; border-radius:10px; border:1px solid var(--pel-border); background:#fff; cursor:pointer}
+    .btn:hover{ background:#f9f9fb }
+    .btn-primary{ background:var(--pel-orange); color:#fff; border-color:transparent }
+    .btn-primary:hover{ filter:brightness(.96) }
+
+    /* KPI cards */
+    .kpis{ display:grid; grid-template-columns:repeat(3,minmax(220px,1fr)); gap:12px; margin:12px 0 18px}
+    .card{ background:var(--pel-card); border:1px solid var(--pel-border); border-radius:14px; padding:14px 16px; box-shadow:0 1px 0 rgba(0,0,0,.03)}
+    .card h3{ margin:0 0 6px; font-size:12px; text-transform:uppercase; letter-spacing:.8px; color:#888}
+    .card .val{ font-size:26px; font-weight:800; color:var(--pel-black)}
+    .card .pill{ font-size:12px; padding:2px 8px; border-radius:999px; background:#fff7f0; color:#9a4b12; border:1px solid #ffd9ba }
+
+    /* Chart + table blocks */
+    .block{ background:#fff; border:1px solid var(--pel-border); border-radius:14px; padding:16px; margin-top:12px}
+    .block h2{ margin:0 0 8px; font-size:16px}
+    #chart{ max-height:360px }
+
+    /* Table */
+    table{ width:100%; border-collapse:collapse; margin-top:8px}
+    th,td{ border-top:1px solid var(--pel-border); padding:8px 10px; font-size:13px; text-align:right}
+    th:first-child, td:first-child{ text-align:left}
+    thead th{ border-top:none; color:#666; background:#fafafa }
+    tfoot th{ background:#fff7ef; color:#8b3a00; border-top:2px solid #ffd1ad}
+    .right{ text-align:right }
+    .link-btn{ text-decoration:none; color:#fff; background:var(--pel-orange); border-radius:10px; padding:8px 12px; display:inline-block}
+    .link-btn:hover{ filter:brightness(.96)}
+    /* Log (admin only) */
+    #log{ display:none; white-space:pre-wrap; background:#fff; border:1px dashed var(--pel-border); padding:10px; border-radius:10px; font-size:12px; max-height:200px; overflow:auto; margin-top:8px}
   </style>
 </head>
 <body>
-  <h1>Dashboard – ML par équipe (par jour)</h1>
+  <div class="appbar">
+    <div class="brand">
+      <img src="assets/logo-pelichet.png" alt="Pelichet">
+      <h1>Pelichet • Dashboard ML <small>par équipe & par jour</small></h1>
+    </div>
 
-  <div class="row">
-    <label>Apps Script URL (/exec) :
-      <input id="gasUrl" type="text" />
-    </label>
-    <label>Sheet ID :
-      <input id="sheetId" type="text" />
-    </label>
-    <button id="refreshBtn">Actualiser</button>
-    <a id="downloadSuivi" class="button" href="#" target="_blank" rel="noopener">Télécharger le dernier “suivi”</a>
+    <!-- panneau admin : caché par défaut (visible avec ?admin=1) -->
+    <div class="admin" id="adminPanel">
+      <div class="row">
+        <label>Apps Script URL (/exec)<br>
+          <input id="gasUrl" type="text">
+        </label>
+        <label>Sheet ID<br>
+          <input id="sheetId" type="text">
+        </label>
+      </div>
+      <div class="row" style="margin-top:8px">
+        <button id="refreshBtn" class="btn btn-primary">Actualiser</button>
+        <a id="downloadSuivi" class="btn" href="#" target="_blank" rel="noopener">Télécharger le dernier “suivi”</a>
+        <button id="toggleLog" class="btn">Afficher/masquer logs</button>
+      </div>
+      <div id="log"></div>
+    </div>
   </div>
 
-  <div id="log"></div>
+  <!-- KPI -->
+  <section class="kpis">
+    <div class="card">
+      <h3>Total ML (période)</h3>
+      <div class="val" id="kpiTotal">—</div>
+      <div class="pill" id="kpiDays">— jours</div>
+    </div>
+    <div class="card">
+      <h3>Équipes actives</h3>
+      <div class="val" id="kpiTeams">—</div>
+      <div class="pill" id="kpiTopTeam">Meilleure équipe : —</div>
+    </div>
+    <div class="card">
+      <h3>Dernier jour</h3>
+      <div class="val" id="kpiLastDay">—</div>
+      <div class="pill" id="kpiLastTotal">Total jour : —</div>
+    </div>
+  </section>
 
-  <div id="chartWrap">
-    <canvas id="chart" height="120"></canvas>
-  </div>
+  <!-- Graph -->
+  <section class="block">
+    <h2>ML par équipe (barres empilées)</h2>
+    <canvas id="chart"></canvas>
+  </section>
 
-  <div id="tableWrap"></div>
+  <!-- Tableau -->
+  <section class="block">
+    <h2>Détails par équipe & par jour</h2>
+    <div id="tableWrap"></div>
+  </section>
 
-  <!-- Chart.js -->
   <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.1/dist/chart.umd.min.js"></script>
-  <!-- Dashboard logic -->
   <script src="dashboard.js"></script>
+  <script>
+    // Afficher le panneau admin seulement avec ?admin=1
+    const params = new URLSearchParams(location.search);
+    if (params.get('admin') === '1') {
+      document.getElementById('adminPanel').style.display = 'block';
+      document.getElementById('log').style.display = 'block';
+    }
+  </script>
 </body>
 </html>
