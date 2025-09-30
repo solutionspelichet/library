@@ -57,8 +57,11 @@ async function onRun() {
     const eWorkbook = await readWorkbook(eFile);
 
     log('Nettoyage & calcul tableaux (suivi / extraction)…');
-    const sData = processWorkbook(sWorkbook, { key:'s_key', user:'s_user', sum:'s_sum', date:'s_date', head:'s_head' });
-    const eData = processWorkbook(eWorkbook, { key:'e_key', user:'e_user', sum:'e_sum', date:'e_date', head:'e_head' });
+    const s1904 = getWorkbookDate1904(sWorkbook);
+const e1904 = getWorkbookDate1904(eWorkbook);
+
+const sData = processWorkbook(sWorkbook, { key:'s_key', user:'s_user', sum:'s_sum', date:'s_date', head:'s_head' }, s1904);
+const eData = processWorkbook(eWorkbook, { key:'e_key', user:'e_user', sum:'e_sum', date:'e_date', head:'e_head' }, e1904);
 
     log('Calcul resultats (addition alignée)…');
     const resultats = mergeTablesByContactAndHeaders(sData.tableau, eData.tableau);
@@ -205,7 +208,9 @@ for (const r of rows) {
   for (const r of dedupe) {
     const u = (r[colUser]==null ? '' : String(r[colUser])).trim(); // normalisation Contact
     usersSet.add(u);
-    const d = parseDate(r[colDate]); if (!d) continue; daysSet.add(d);
+    // AVANT : const d = parseDate(r[colDate]);
+const d = parseDate(r[colDate], is1904);
+
     const val = parseNumber(r[colSum]); // parsing FR robuste
     const key = `${u}||${d}`;
     perDayMap.set(key, (perDayMap.get(key)||0) + val);
@@ -221,6 +226,7 @@ for (const r of rows) {
     for (const d of days) row.push(perDayMap.get(`${u}||${d}`) || 0);
     rowsOut.push(row);
   }
+  debugLastDay('Process', perDayMap); // journalise le dernier jour pour ce fichier
 
   return { tableau: { headers: headersOut, rows: rowsOut } };
 }
