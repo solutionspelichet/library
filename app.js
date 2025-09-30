@@ -112,6 +112,8 @@ function parseNumber(v){
 // Convertit en AAAA-MM-JJ ; gère ISO, JJ/MM/AAAA (±heure) et numéros Excel (1900 & 1904)
 // Convertit en AAAA-MM-JJ ; gère ISO, JJ/MM/AAAA (±heure), numéros Excel (1900 & 1904),
 // ET aussi les numéros Excel sous forme de CHAÎNES ("45199" ou "45199,25").
+// Convertit en AAAA-MM-JJ ; gère ISO, JJ/MM/AAAA (±heure), numéros Excel (1900 & 1904)
+// + tolère un suffixe de fuseau horaire en fin de chaîne comme " +02:00", " UTC+2", " GMT+01:00".
 function parseDate(v, date1904=false) {
   if (v == null || v === '') return null;
 
@@ -123,9 +125,17 @@ function parseDate(v, date1904=false) {
     if (!isNaN(d)) return fmtYMD(d);
   }
 
-  // 2) Chaîne numérique → traiter comme serial Excel
+  // 2) Chaîne → nettoyer les suffixes de fuseau à la fin (" +02:00", "UTC+2", "GMT+01:00")
   if (typeof v === 'string') {
-    const sNum = v.trim().replace(',', '.'); // "45199,5" -> "45199.5"
+    let s = v.trim();
+
+    // supprime un éventuel suffixe timezone en fin de chaîne
+    // ex: "29/09/2025 16:01:17 +02:00" -> "29/09/2025 16:01:17"
+    //     "29/09/2025 16:01 UTC+2"     -> "29/09/2025 16:01"
+    s = s.replace(/\s*(?:GMT|UTC)?\s*[+-]\d{2}:?\d{0,2}\s*$/i, '');
+
+    // (cas chaînes numériques: serial Excel sous forme de texte "45199" ou "45199,5")
+    const sNum = s.replace(',', '.');
     if (/^\d+(\.\d+)?$/.test(sNum)) {
       const serial = date1904 ? (parseFloat(sNum) + 1462) : parseFloat(sNum);
       if (isFinite(serial)) {
@@ -134,18 +144,17 @@ function parseDate(v, date1904=false) {
         if (!isNaN(d)) return fmtYMD(d);
       }
     }
-  }
 
-  // 3) ISO-like en local
-  if (typeof v === 'string') {
-    let m = v.match(/^(\d{4})-(\d{2})-(\d{2})(?:[ T](\d{2})(?::(\d{2})(?::(\d{2}))?)?)?/);
+    // 3) ISO-like en local
+    let m = s.match(/^(\d{4})-(\d{2})-(\d{2})(?:[ T](\d{2})(?::(\d{2})(?::(\d{2}))?)?)?/);
     if (m) {
       const [_, YYYY, MM, DD, hh='0', mm='0', ss='0'] = m;
       const d = new Date(Number(YYYY), Number(MM)-1, Number(DD), Number(hh), Number(mm), Number(ss));
       if (!isNaN(d)) return fmtYMD(d);
     }
-    // 4) JJ/MM/AAAA (±heure)
-    m = v.match(/^(\d{1,2})[\/\-\.](\d{1,2})[\/\-\.](\d{4})(?:\s+(\d{1,2}):(\d{2})(?::(\d{2}))?)?$/);
+
+    // 4) JJ/MM/AAAA (±heure, ±secondes, ±millisecondes)
+    m = s.match(/^(\d{1,2})[\/\-\.](\d{1,2})[\/\-\.](\d{4})(?:\s+(\d{1,2})(?::(\d{2})(?::(\d{2}))?)?(?:\.(\d{1,3}))?)?$/);
     if (m) {
       const [_, DD, MM, YYYY, hh='0', mm='0', ss='0'] = m;
       const d = new Date(Number(YYYY), Number(MM)-1, Number(DD), Number(hh), Number(mm), Number(ss));
@@ -153,10 +162,11 @@ function parseDate(v, date1904=false) {
     }
   }
 
-  // 5) fallback
+  // 5) ultime recours
   const d = new Date(v);
   return isNaN(d) ? null : fmtYMD(d);
 }
+
 
 function fmtYMD(d){ const y=d.getFullYear(), m=String(d.getMonth()+1).padStart(2,'0'), day=String(d.getDate()).padStart(2,'0'); return `${y}-${m}-${day}`; }
 
