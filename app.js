@@ -110,19 +110,33 @@ function parseNumber(v){
 }
 
 // Convertit en AAAA-MM-JJ ; gère ISO, JJ/MM/AAAA (±heure) et numéros Excel (1900 & 1904)
+// Convertit en AAAA-MM-JJ ; gère ISO, JJ/MM/AAAA (±heure), numéros Excel (1900 & 1904),
+// ET aussi les numéros Excel sous forme de CHAÎNES ("45199" ou "45199,25").
 function parseDate(v, date1904=false) {
   if (v == null || v === '') return null;
 
-  // Numéro Excel
+  // 1) Numéro Excel (Number)
   if (typeof v === 'number' && isFinite(v)) {
-    // Ajuste pour base 1904 si nécessaire (+1462 jours)
     const serial = date1904 ? (v + 1462) : v;
     const ms = Math.round((serial - 25569) * 86400 * 1000); // base Excel 1899-12-30
     const d = new Date(ms);
     if (!isNaN(d)) return fmtYMD(d);
   }
 
-  // ISO-like en local
+  // 2) Chaîne numérique → traiter comme serial Excel
+  if (typeof v === 'string') {
+    const sNum = v.trim().replace(',', '.'); // "45199,5" -> "45199.5"
+    if (/^\d+(\.\d+)?$/.test(sNum)) {
+      const serial = date1904 ? (parseFloat(sNum) + 1462) : parseFloat(sNum);
+      if (isFinite(serial)) {
+        const ms = Math.round((serial - 25569) * 86400 * 1000);
+        const d = new Date(ms);
+        if (!isNaN(d)) return fmtYMD(d);
+      }
+    }
+  }
+
+  // 3) ISO-like en local
   if (typeof v === 'string') {
     let m = v.match(/^(\d{4})-(\d{2})-(\d{2})(?:[ T](\d{2})(?::(\d{2})(?::(\d{2}))?)?)?/);
     if (m) {
@@ -130,7 +144,7 @@ function parseDate(v, date1904=false) {
       const d = new Date(Number(YYYY), Number(MM)-1, Number(DD), Number(hh), Number(mm), Number(ss));
       if (!isNaN(d)) return fmtYMD(d);
     }
-    // JJ/MM/AAAA
+    // 4) JJ/MM/AAAA (±heure)
     m = v.match(/^(\d{1,2})[\/\-\.](\d{1,2})[\/\-\.](\d{4})(?:\s+(\d{1,2}):(\d{2})(?::(\d{2}))?)?$/);
     if (m) {
       const [_, DD, MM, YYYY, hh='0', mm='0', ss='0'] = m;
@@ -139,10 +153,11 @@ function parseDate(v, date1904=false) {
     }
   }
 
-  // fallback
+  // 5) fallback
   const d = new Date(v);
   return isNaN(d) ? null : fmtYMD(d);
 }
+
 function fmtYMD(d){ const y=d.getFullYear(), m=String(d.getMonth()+1).padStart(2,'0'), day=String(d.getDate()).padStart(2,'0'); return `${y}-${m}-${day}`; }
 
 // ======================
@@ -197,6 +212,15 @@ function processWorkbook(workbook, refs, is1904=false, labelForLogs='Fichier') {
   const colUser = colNameByLetter(refs.user);
   const colSum  = colNameByLetter(refs.sum);
   const colDate = colNameByLetter(refs.date);
+  // Debug: échantillons bruts de la colonne Date
+try {
+  const samples = [];
+  for (let i = 0; i < Math.min(rows.length, 10); i++) {
+    const raw = rows[i][colDate];
+    samples.push(`${typeof raw}:${String(raw)}`);
+  }
+  log(`🔎 [${labelForLogs}] Colonne Date='${colDate}' — exemples: ` + samples.join(' | '));
+} catch(e) { /* ignore */ }
 
   // Dédoublonnage (garde le 1er). Si la clé est vide → on NE dédoublonne PAS.
   const seen = new Set(); 
