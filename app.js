@@ -8,6 +8,66 @@ const logEl = $('log');
 const log = (m) => { try { console.log(m); } catch(_){} if (logEl) logEl.textContent += m + '\n'; };
 const setBusy = (busy) => { const b = $('runBtn'); if (b) { b.disabled = busy; b.textContent = busy ? 'Traitement en cours…' : 'Lancer le traitement'; } };
 
+// ======= IndexedDB helpers pour mémoriser le dernier fichier "suivi" =======
+const DB_NAME = 'pelichet-cache';
+const DB_STORE = 'files';
+const KEY_SUIVI = 'last_suivi';
+
+function idbOpen(){
+  return new Promise((resolve, reject) => {
+    const req = indexedDB.open(DB_NAME, 1);
+    req.onupgradeneeded = () => {
+      const db = req.result;
+      if (!db.objectStoreNames.contains(DB_STORE)) db.createObjectStore(DB_STORE);
+    };
+    req.onsuccess = () => resolve(req.result);
+    req.onerror = () => reject(req.error);
+  });
+}
+function idbPut(key, value){
+  return idbOpen().then(db => new Promise((resolve, reject) => {
+    const tx = db.transaction(DB_STORE, 'readwrite');
+    tx.objectStore(DB_STORE).put(value, key);
+    tx.oncomplete = () => resolve();
+    tx.onerror = () => reject(tx.error);
+  }));
+}
+function idbGet(key){
+  return idbOpen().then(db => new Promise((resolve, reject) => {
+    const tx = db.transaction(DB_STORE, 'readonly');
+    const req = tx.objectStore(DB_STORE).get(key);
+    req.onsuccess = () => resolve(req.result);
+    req.onerror = () => reject(req.error);
+  }));
+}
+
+// Sauvegarde le fichier "suivi" (nom + Blob)
+async function saveLastSuivi(file){
+  try{
+    const buf = await file.arrayBuffer();
+    const rec = { name: file.name, type: file.type || 'application/octet-stream', buf };
+    await idbPut(KEY_SUIVI, rec);
+    log(`💾 Suivi mémorisé localement: ${file.name}`);
+  }catch(e){ log('⚠️ Sauvegarde suivi impossible: ' + e.message); }
+}
+
+// Recharge le dernier fichier "suivi" mémorisé → File
+async function loadLastSuivi(){
+  const rec = await idbGet(KEY_SUIVI);
+  if (!rec || !rec.buf) return null;
+  try{
+    const blob = new Blob([rec.buf], { type: rec.type || 'application/octet-stream' });
+    const f = new File([blob], rec.name || 'suivi.xlsx', { type: rec.type || 'application/octet-stream' });
+    log(`📥 Suivi rechargé depuis le cache: ${rec.name || 'suivi.xlsx'}`);
+    return f;
+  }catch(e){
+    log('⚠️ Recharge suivi impossible: ' + e.message);
+    return null;
+  }
+}
+
+
+
 // Log erreurs visibles
 window.addEventListener('error', (e) => log('⛔ JS error: ' + (e?.error?.message || e.message || e.toString())));
 window.addEventListener('unhandledrejection', (e) => log('⛔ Promise rejection: ' + (e?.reason?.message || e.reason || e.toString())));
@@ -26,6 +86,14 @@ document.addEventListener('DOMContentLoaded', () => {
   const tbtn = $('testBtn'); if (tbtn && !tbtn.onclick) tbtn.addEventListener('click', testConnexion);
 
   if ($('secret')) $('secret').addEventListener('change', e => localStorage.setItem('PWA_SECRET', e.target.value));
+  const suiviInput = $('suiviFile');
+  if (suiviInput && !suiviInput._wiredSave){
+    suiviInput.addEventListener('change', async (e)=>{
+      const f = e.target?.files?.[0];
+      if (f) await saveLastSuivi(f);
+    });
+    suiviInput._wiredSave = true;
+  }
 });
 
 // Test GET (indicatif ; en no-cors la réponse est opaque)
@@ -335,11 +403,15 @@ async function onRun() {
   try {
     log('--- Début ---');
 
-    const sFile = $('suiviFile')?.files?.[0];
+    let sFile = $('suiviFile')?.files?.[0];
     const eFile = $('extractFile')?.files?.[0];
     const secret = $('secret') ? $('secret').value.trim() : '';
 
-    if (!sFile) { alert('Sélectionne le fichier de suivi (.xlsx)'); throw new Error('Suivi manquant'); }
+    if (!sFile) {
+  log('ℹ️ Aucun fichier suivi sélectionné — tentative de recharge depuis le cache…');
+  sFile = await loadLastSuivi();
+}
+if (!sFile) { alert('Sélectionne le fichier de suivi (.xlsx)'); throw new Error('Suivi manquant'); }
     if (!eFile) { alert('Sélectionne le fichier d’extraction (.xlsx)'); throw new Error('Extraction manquante'); }
     if (!GAS_URL) { alert('Définis GAS_URL dans app.js'); throw new Error('URL Apps Script absente'); }
 
