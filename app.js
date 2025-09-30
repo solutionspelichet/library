@@ -38,80 +38,6 @@ async function testConnexion(){
   }catch(e){ log('❌ Test: ' + e.message); alert(e.message); }
 }
 
-// Lancer le traitement
-async function onRun() {
-  setBusy(true);
-  try {
-    log('--- Début ---');
-
-    const sFile = $('suiviFile')?.files?.[0];
-    const eFile = $('extractFile')?.files?.[0];
-    const secret = $('secret') ? $('secret').value.trim() : '';
-
-    if (!sFile) { alert('Sélectionne le fichier de suivi (.xlsx)'); throw new Error('Suivi manquant'); }
-    if (!eFile) { alert('Sélectionne le fichier d’extraction (.xlsx)'); throw new Error('Extraction manquante'); }
-    if (!GAS_URL) { alert('Définis GAS_URL dans app.js'); throw new Error('URL Apps Script absente'); }
-
-    log('Lecture fichiers… (dans le navigateur)');
-    const sWorkbook = await readWorkbook(sFile);
-    const eWorkbook = await readWorkbook(eFile);
-
-    const s1904 = getWorkbookDate1904(sWorkbook);
-    const e1904 = getWorkbookDate1904(eWorkbook);
-    log(`ℹ️ Suivi : date1904=${s1904 ? 'TRUE' : 'FALSE'}`);
-    log(`ℹ️ Extraction : date1904=${e1904 ? 'TRUE' : 'FALSE'}`);
-
-    log('Nettoyage & calcul tableaux (suivi / extraction)…');
-    const sData = processWorkbook(sWorkbook, { key:'s_key', user:'s_user', sum:'s_sum', date:'s_date' }, s1904);
-    const eData = processWorkbook(eWorkbook, { key:'e_key', user:'e_user', sum:'e_sum', date:'e_date' }, e1904);
-
-    // Logs "dernier jour"
-    logLastDay('Suivi', sData.tableau);
-    logLastDay('Extraction', eData.tableau);
-
-    log('Calcul resultats (addition alignée)…');
-    const resultats = mergeTablesByContactAndHeaders(sData.tableau, eData.tableau);
-    const ml = multiplyValues(resultats, 0.35);
-
-    // Pré-contrôle pour éviter d’écraser le Sheet si vide
-    const dayCount = (resultats.headers?.length || 1) - 1;
-    const rowCount = (resultats.rows?.length || 0);
-    log(`🧪 Pré-contrôle → contacts: ${rowCount}, jours: ${dayCount}`);
-    if (dayCount <= 0 || rowCount <= 0) {
-      alert("Aucune donnée exploitable détectée (0 jour ou 0 contact). Envoi annulé pour ne pas vider le Google Sheet.");
-      return;
-    }
-    log(`[LOCAL] s.rows=${(sData.tableau.rows||[]).length} e.rows=${(eData.tableau.rows||[]).length}`);
-
-    const payload = {
-      secret,
-      sheetId: SHEET_ID,
-      resultats: { headers: resultats.headers, rows: resultats.rows },
-      ml: { headers: ml.headers, rows: ml.rows }
-    };
-
-    log('Envoi vers Google Sheets (Apps Script)…');
-    // IMPORTANT: no-cors => on n’essaie pas de lire la réponse
-    await fetch(GAS_URL, {
-      method: 'POST',
-      mode: 'no-cors',
-      redirect: 'follow',
-      credentials: 'omit',
-      headers: { 'Content-Type': 'text/plain;charset=utf-8' },
-      body: JSON.stringify(payload)
-    });
-
-    log('✅ Requête envoyée (no-cors). Vérifie le Google Sheet (onglets "resultats" et "ML").');
-    alert('Envoi effectué. Ouvre le Google Sheet pour vérifier.');
-  } catch (e) {
-    log('❌ ' + e.message);
-    alert('Erreur : ' + e.message);
-  } finally {
-    setBusy(false);
-    log('--- Fin ---');
-  }
-}
-
 // ==================
 // Lecture / parsing
 // ==================
@@ -159,160 +85,16 @@ function aoaToObjects(aoa){
   return aoa.slice(1).map(row => { const o={}; headers.forEach((h,i)=>o[h]=row[i]); return o; });
 }
 
-// ======================
-// Traitements principaux
-// ======================
-
-
+// Normalisation robuste des contacts
 function normContact(s){
   return (s==null ? '' : String(s))
     .normalize('NFKC')        // homogénéise accents/ligatures
     .replace(/\s+/g,' ')      // compresse espaces
     .trim()
-    .toLocaleUpperCase('fr-FR'); // casse insensible
+    .toLocaleUpperCase('fr-FR');
 }
 
-function logProcessSummary(label, summary){
-  const { rowsRead, rowsAfterClean, rowsAfterDedupe, daysCount, first5Days, last5Days, totalSum } = summary;
-  log(`📊 ${label} | lus=${rowsRead} | après nettoyage=${rowsAfterClean} | après dédoublonnage=${rowsAfterDedupe} | jours=${daysCount} | total=${totalSum}`);
-  log(`   premiers jours: ${first5Days.join(', ')}`);
-  log(`   derniers  jours: ${last5Days.join(', ')}`);
-}
-
-
-
-function processWorkbook(workbook, refs, is1904=false) {
-  const aoa = cleanSheetToAOA(workbook);
-  const rows = aoaToObjects(aoa);
-  if (!rows.length) return { tableau: emptyTable() };
-
-  const headers = aoa[0];
-  function colNameByLetter(letter){
-  const idx = excelLetterToIndex($(letter).value);
-  if (idx < 0 || idx >= headers.length) {
-    throw new Error(`Lettre colonne hors plage: ${$(letter).value} (headers=${headers.length})`);
-  }
-  return headers[idx];
-}
-
-const colKey  = colNameByLetter(refs.key);
-const colUser = colNameByLetter(refs.user);
-const colSum  = colNameByLetter(refs.sum);
-const colDate = colNameByLetter(refs.date);
-
-  const colByLetter = (L) => headers[excelLetterToIndex($(refs[L]).value)];
-  const colKey  = colByLetter('key');
-  const colUser = colByLetter('user');
-  const colSum  = colByLetter('sum');
-  const colDate = colByLetter('date');
-
-  // Dédoublonnage (garde le 1er). Si la clé est vide → on NE dédoublonne PAS.
-  const seen = new Set(); 
-  const dedupe = [];
-  for (const r of rows) {
-    const kRaw = r[colKey];
-    const k = (kRaw == null ? '' : String(kRaw)).trim();
-    if (!k) {
-      dedupe.push(r);
-    } else if (!seen.has(k)) {
-      seen.add(k);
-      dedupe.push(r);
-    }
-  }
-
-  // Agrégation par jour (date = colDate tronquée AAAA-MM-JJ)
-  const perDayMap = new Map(); const usersSet = new Set(); const daysSet = new Set();
-  for (const r of dedupe) {
-    const u = normContact(r[colUser]); // normalisation Contact
-    usersSet.add(u);
-    const d = parseDate(r[colDate], is1904); if (!d) continue; daysSet.add(d);
-    const val = parseNumber(r[colSum]); // parsing FR robuste
-    const key = `${u}||${d}`;
-    perDayMap.set(key, (perDayMap.get(key)||0) + val);
-  }
-
-  const days = Array.from(daysSet).sort();
-  const headersOut = ['Contact', ...days.map(d => `nombre colonne carton ${d}`)];
-  console.log('[DEBUG] dates détectées', days);
-
-  const rowsOut = [];
-  for (const u of Array.from(usersSet).sort()) {
-    const row = [u];
-    for (const d of days) row.push(perDayMap.get(`${u}||${d}`) || 0);
-    rowsOut.push(row);
-  }
-  const summary = {
-  rowsRead: (rows?.length || 0),
-  rowsAfterClean: (rows?.length || 0),           // ici rows = après cleanSheetToAOA + mapping
-  rowsAfterDedupe: dedupe.length,
-  daysCount: days.length,
-  first5Days: days.slice(0,5),
-  last5Days: days.slice(-5),
-  totalSum: Array.from(perDayMap.values()).reduce((a,b)=>a+Number(b||0),0)
-};
-logProcessSummary(headers === (aoa?.[0]||[] ) ? 'Fichier' : 'Fichier', summary);
-
-  return { tableau: { headers: headersOut, rows: rowsOut } };
-}
-
-function emptyTable(){ return { headers:['Contact'], rows:[] } }
-
-// =====================
-// Outils de fusion/pivot
-// =====================
-function excelLetterToIndex(L) {
-  L = String(L || '').trim().toUpperCase();
-  let idx = 0;
-  for (const ch of L) idx = idx * 26 + (ch.charCodeAt(0) - 64);
-  return idx - 1;
-}
-
-function mergeTablesByContactAndHeaders(A, B) {
-  const headers = Array.from(new Set([...(A.headers||[]), ...(B.headers||[])]));
-  const ci = headers.indexOf('Contact'); if (ci>0){ headers.splice(ci,1); headers.unshift('Contact'); }
-
-  const idxA = indexMap(A.headers||[]), idxB = indexMap(B.headers||[]);
-  const norm = (s) => normContact(s);
-
-  const contacts = new Set([...(A.rows||[]).map(r=>norm(r[0])), ...(B.rows||[]).map(r=>norm(r[0]))]);
-  const mapA = new Map(); (A.rows||[]).forEach(r => mapA.set(norm(r[0]), r));
-  const mapB = new Map(); (B.rows||[]).forEach(r => mapB.set(norm(r[0]), r));
-
-  const outRows = [];
-  for (const c of Array.from(contacts).sort()) {
-    const row = Array(headers.length).fill(0); row[0] = c;
-    const ra = mapA.get(c), rb = mapB.get(c);
-    if (ra) sumRowIntoParsed(row, ra, headers, idxA);
-    if (rb) sumRowIntoParsed(row, rb, headers, idxB);
-    for (let i=1;i<row.length;i++) row[i] = parseNumber(row[i]);
-    outRows.push(row);
-  }
-  return { headers, rows: outRows };
-}
-
-function indexMap(h){ const m={}; (h||[]).forEach((name,i)=>m[name]=i); return m; }
-function sumRowIntoParsed(targetRow, srcRow, headers, srcIdxMap){
-  for (let i=1;i<headers.length;i++){
-    const name = headers[i];
-    const si = srcIdxMap[name];
-    const v = (si==null) ? 0 : parseNumber(srcRow[si]);
-    targetRow[i] = parseNumber(targetRow[i]) + v;
-  }
-}
-
-function multiplyValues(table, k){
-  const headers = table.headers.slice();
-  const rows = table.rows.map(r=>{
-    const out = r.slice();
-    for (let i=1;i<out.length;i++) out[i] = parseNumber(out[i]) * k;
-    return out;
-  });
-  return { headers, rows };
-}
-
-// ===================
 // Parsing nombres/dates
-// ===================
 function parseNumber(v){
   if (v == null || v === '') return 0;
   if (typeof v === 'number' && isFinite(v)) return v;
@@ -363,7 +145,25 @@ function parseDate(v, date1904=false) {
 }
 function fmtYMD(d){ const y=d.getFullYear(), m=String(d.getMonth()+1).padStart(2,'0'), day=String(d.getDate()).padStart(2,'0'); return `${y}-${m}-${day}`; }
 
-// --- Aide: log dernier jour pour un tableau type {headers, rows}
+// ======================
+// Traitements principaux
+// ======================
+function excelLetterToIndex(L) {
+  L = String(L || '').trim().toUpperCase();
+  let idx = 0;
+  for (const ch of L) idx = idx * 26 + (ch.charCodeAt(0) - 64);
+  return idx - 1;
+}
+
+// Résumé/log de traitement
+function logProcessSummary(label, summary){
+  const { rowsRead, rowsAfterDedupe, daysCount, first5Days, last5Days, totalSum } = summary;
+  log(`📊 ${label} | lus=${rowsRead} | après dédoublonnage=${rowsAfterDedupe} | jours=${daysCount} | total=${totalSum}`);
+  if (first5Days.length) log(`   premiers jours: ${first5Days.join(', ')}`);
+  if (last5Days.length)  log(`   derniers  jours: ${last5Days.join(', ')}`);
+}
+
+// Log dernier jour pour un tableau {headers, rows}
 function logLastDay(label, table){
   try{
     const headers = table?.headers || [];
@@ -375,6 +175,196 @@ function logLastDay(label, table){
     for (const r of (table?.rows || [])) total += Number(r[idx] || 0);
     log(`ℹ️ ${label} – dernier jour: ${last} | total=${total}`);
   }catch(e){}
+}
+
+function processWorkbook(workbook, refs, is1904=false, labelForLogs='Fichier') {
+  const aoa = cleanSheetToAOA(workbook);
+  const rows = aoaToObjects(aoa);
+  if (!rows.length) return { tableau: emptyTable(), summary: { rowsRead:0, rowsAfterDedupe:0, daysCount:0, first5Days:[], last5Days:[], totalSum:0 } };
+
+  const headers = aoa[0];
+
+  function colNameByLetter(inputId){
+    const letter = $(inputId).value;
+    const idx = excelLetterToIndex(letter);
+    if (idx < 0 || idx >= headers.length) {
+      throw new Error(`Lettre colonne hors plage: ${letter} (headers=${headers.length})`);
+    }
+    return headers[idx];
+  }
+
+  const colKey  = colNameByLetter(refs.key);
+  const colUser = colNameByLetter(refs.user);
+  const colSum  = colNameByLetter(refs.sum);
+  const colDate = colNameByLetter(refs.date);
+
+  // Dédoublonnage (garde le 1er). Si la clé est vide → on NE dédoublonne PAS.
+  const seen = new Set(); 
+  const dedupe = [];
+  for (const r of rows) {
+    const kRaw = r[colKey];
+    const k = (kRaw == null ? '' : String(kRaw)).trim();
+    if (!k) {
+      dedupe.push(r);
+    } else if (!seen.has(k)) {
+      seen.add(k);
+      dedupe.push(r);
+    }
+  }
+
+  // Agrégation par jour (date = AAAA-MM-JJ)
+  const perDayMap = new Map(); const usersSet = new Set(); const daysSet = new Set();
+  for (const r of dedupe) {
+    const u = normContact(r[colUser]); // normalisation Contact
+    usersSet.add(u);
+    const d = parseDate(r[colDate], is1904); if (!d) continue; daysSet.add(d);
+    const val = parseNumber(r[colSum]); // parsing FR robuste
+    const key = `${u}||${d}`;
+    perDayMap.set(key, (perDayMap.get(key)||0) + val);
+  }
+
+  const days = Array.from(daysSet).sort();
+  const headersOut = ['Contact', ...days.map(d => `nombre colonne carton ${d}`)];
+  const rowsOut = [];
+  for (const u of Array.from(usersSet).sort()) {
+    const row = [u];
+    for (const d of days) row.push(perDayMap.get(`${u}||${d}`) || 0);
+    rowsOut.push(row);
+  }
+
+  const summary = {
+    rowsRead: rows.length,
+    rowsAfterDedupe: dedupe.length,
+    daysCount: days.length,
+    first5Days: days.slice(0,5),
+    last5Days: days.slice(-5),
+    totalSum: Array.from(perDayMap.values()).reduce((a,b)=>a+Number(b||0),0)
+  };
+  logProcessSummary(labelForLogs, summary);
+
+  return { tableau: { headers: headersOut, rows: rowsOut }, summary };
+}
+
+function emptyTable(){ return { headers:['Contact'], rows:[] } }
+
+// =====================
+// Fusion & dérivés
+// =====================
+function mergeTablesByContactAndHeaders(A, B) {
+  const headers = Array.from(new Set([...(A.headers||[]), ...(B.headers||[])]));
+  const ci = headers.indexOf('Contact'); if (ci>0){ headers.splice(ci,1); headers.unshift('Contact'); }
+
+  const idxA = indexMap(A.headers||[]), idxB = indexMap(B.headers||[]);
+  const norm = (s) => normContact(s);
+
+  const contacts = new Set([...(A.rows||[]).map(r=>norm(r[0])), ...(B.rows||[]).map(r=>norm(r[0]))]);
+  const mapA = new Map(); (A.rows||[]).forEach(r => mapA.set(norm(r[0]), r));
+  const mapB = new Map(); (B.rows||[]).forEach(r => mapB.set(norm(r[0]), r));
+
+  const outRows = [];
+  for (const c of Array.from(contacts).sort()) {
+    const row = Array(headers.length).fill(0); row[0] = c;
+    const ra = mapA.get(c), rb = mapB.get(c);
+    if (ra) sumRowIntoParsed(row, ra, headers, idxA);
+    if (rb) sumRowIntoParsed(row, rb, headers, idxB);
+    for (let i=1;i<row.length;i++) row[i] = parseNumber(row[i]);
+    outRows.push(row);
+  }
+  return { headers, rows: outRows };
+}
+
+function indexMap(h){ const m={}; (h||[]).forEach((name,i)=>m[name]=i); return m; }
+function sumRowIntoParsed(targetRow, srcRow, headers, srcIdxMap){
+  for (let i=1;i<headers.length;i++){
+    const name = headers[i];
+    const si = srcIdxMap[name];
+    const v = (si==null) ? 0 : parseNumber(srcRow[si]);
+    targetRow[i] = parseNumber(targetRow[i]) + v;
+  }
+}
+
+function multiplyValues(table, k){
+  const headers = table.headers.slice();
+  const rows = table.rows.map(r=>{
+    const out = r.slice();
+    for (let i=1;i<out.length;i++) out[i] = parseNumber(out[i]) * k;
+    return out;
+  });
+  return { headers, rows };
+}
+
+// ------------------------------
+// Lancer le traitement complet
+// ------------------------------
+async function onRun() {
+  setBusy(true);
+  try {
+    log('--- Début ---');
+
+    const sFile = $('suiviFile')?.files?.[0];
+    const eFile = $('extractFile')?.files?.[0];
+    const secret = $('secret') ? $('secret').value.trim() : '';
+
+    if (!sFile) { alert('Sélectionne le fichier de suivi (.xlsx)'); throw new Error('Suivi manquant'); }
+    if (!eFile) { alert('Sélectionne le fichier d’extraction (.xlsx)'); throw new Error('Extraction manquante'); }
+    if (!GAS_URL) { alert('Définis GAS_URL dans app.js'); throw new Error('URL Apps Script absente'); }
+
+    log('Lecture fichiers… (dans le navigateur)');
+    const sWorkbook = await readWorkbook(sFile);
+    const eWorkbook = await readWorkbook(eFile);
+
+    const s1904 = getWorkbookDate1904(sWorkbook);
+    const e1904 = getWorkbookDate1904(eWorkbook);
+    log(`ℹ️ Suivi : date1904=${s1904 ? 'TRUE' : 'FALSE'}`);
+    log(`ℹ️ Extraction : date1904=${e1904 ? 'TRUE' : 'FALSE'}`);
+
+    log('Nettoyage & calcul tableaux (suivi / extraction)…');
+    const sData = processWorkbook(sWorkbook, { key:'s_key', user:'s_user', sum:'s_sum', date:'s_date' }, s1904, 'Suivi');
+    const eData = processWorkbook(eWorkbook, { key:'e_key', user:'e_user', sum:'e_sum', date:'e_date' }, e1904, 'Extraction');
+
+    // Logs "dernier jour"
+    logLastDay('Suivi', sData.tableau);
+    logLastDay('Extraction', eData.tableau);
+
+    log('Calcul resultats (addition alignée)…');
+    const resultats = mergeTablesByContactAndHeaders(sData.tableau, eData.tableau);
+    const ml = multiplyValues(resultats, 0.35);
+
+    // Pré-contrôle pour éviter d’écraser le Sheet si vide
+    const dayCount = (resultats.headers?.length || 1) - 1;
+    const rowCount = (resultats.rows?.length || 0);
+    log(`🧪 Pré-contrôle → contacts: ${rowCount}, jours: ${dayCount}`);
+    if (dayCount <= 0 || rowCount <= 0) {
+      alert("Aucune donnée exploitable détectée (0 jour ou 0 contact). Envoi annulé pour ne pas vider le Google Sheet.");
+      return;
+    }
+
+    const payload = {
+      secret,
+      sheetId: SHEET_ID,
+      resultats: { headers: resultats.headers, rows: resultats.rows },
+      ml: { headers: ml.headers, rows: ml.rows }
+    };
+
+    log('Envoi vers Google Sheets (Apps Script)…');
+    await fetch(GAS_URL, {
+      method: 'POST',
+      mode: 'no-cors',            // on n’essaie pas de lire la réponse (CORS)
+      redirect: 'follow',
+      credentials: 'omit',
+      headers: { 'Content-Type': 'text/plain;charset=utf-8' },
+      body: JSON.stringify(payload)
+    });
+
+    log('✅ Requête envoyée (no-cors). Vérifie le Google Sheet (onglets "resultats" et "ML").');
+    alert('Envoi effectué. Ouvre le Google Sheet pour vérifier.');
+  } catch (e) {
+    log('❌ ' + e.message);
+    alert('Erreur : ' + e.message);
+  } finally {
+    setBusy(false);
+    log('--- Fin ---');
+  }
 }
 
 // Expose global (fallback onclick dans index.html)
