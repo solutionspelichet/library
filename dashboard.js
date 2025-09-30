@@ -2,6 +2,7 @@
 const DEFAULT_GAS_URL = 'https://script.google.com/macros/s/AKfycbwO0P3Yo5kw9PPriJPXzUMipBrzlGTR_r-Ff6OyEUnsNu-I9q-rESbBq7l2m6KLA3RJ/exec'; // <-- colle ton /exec
 const DEFAULT_SHEET_ID = '1AptbV2NbY0WQZpe_Xt1K2iVlDpgKADElamKQCg3GcXQ';
 
+
 // ====== Helpers UI ======
 const $ = (id) => document.getElementById(id);
 const log = (m) => { const el = $('log'); if (el) el.textContent += m + '\n'; console.log(m); };
@@ -69,7 +70,7 @@ function updateKpis({days, teams, matrix}){
   }
 
   $('kpiTotal').textContent = kTotal.toFixed(2);
-  $('kpiDays').textContent = `${days.length} jours`;
+  $('kpiDays').textContent  = `${days.length} jours`;
   $('kpiTeams').textContent = kTeams;
   $('kpiTopTeam').textContent = `Meilleure équipe : ${bestTeam}`;
   $('kpiLastDay').textContent = lastDay;
@@ -118,7 +119,7 @@ function renderChart({days, teams, matrix}){
   const ctx = $('chart');
   if (!ctx || !days.length) return;
 
-  // couleurs Pelichet (orange + gamme neutre)
+  // palette Pelichet
   const base = [
     '#F07A24','#404040','#8C8C8C','#BFBFBF',
     '#FFB37A','#737373','#D9D9D9','#595959',
@@ -138,10 +139,8 @@ function renderChart({days, teams, matrix}){
     data:{ labels:days, datasets:ds },
     options:{
       responsive:true,
-      plugins:{
-        legend:{ position:'bottom' },
-        title:{ display:false }
-      },
+      maintainAspectRatio:false,
+      plugins:{ legend:{ position:'bottom' } },
       scales:{ x:{ stacked:true }, y:{ stacked:true, beginAtZero:true } }
     }
   });
