@@ -106,6 +106,23 @@ async function testConnexion(){
   }catch(e){ log('❌ Test: ' + e.message); alert(e.message); }
 }
 
+
+// Convertit un File en base64 (sans préfixe data:)
+function fileToBase64(file){
+  return new Promise((resolve, reject)=>{
+    const fr = new FileReader();
+    fr.onload = () => {
+      const s = String(fr.result || '');
+      const base64 = s.split(',').pop(); // retire "data:...;base64,"
+      resolve(base64 || '');
+    };
+    fr.onerror = () => reject(fr.error || new Error('FileReader error'));
+    fr.readAsDataURL(file);
+  });
+}
+function fmtBytes(n){ return n ? `${(n/1024/1024).toFixed(2)} MB` : '0'; }
+
+
 // ==================
 // Lecture / parsing
 // ==================
@@ -445,12 +462,36 @@ if (!sFile) { alert('Sélectionne le fichier de suivi (.xlsx)'); throw new Error
       return;
     }
 
-    const payload = {
-      secret,
-      sheetId: SHEET_ID,
-      resultats: { headers: resultats.headers, rows: resultats.rows },
-      ml: { headers: ml.headers, rows: ml.rows }
-    };
+    // Taille max conseillée 50 MB
+const MAX_MB = 50;
+
+let suiviB64 = null, extractB64 = null;
+if (sFile) {
+  if (sFile.size > MAX_MB*1024*1024) throw new Error(`Fichier suivi trop gros (> ${MAX_MB} MB)`);
+  log(`📤 Prépare upload Drive - suivi: ${sFile.name} (${fmtBytes(sFile.size)})`);
+  suiviB64 = await fileToBase64(sFile);
+}
+if (eFile) {
+  if (eFile.size > MAX_MB*1024*1024) throw new Error(`Fichier extraction trop gros (> ${MAX_MB} MB)`);
+  // Décommente si tu veux aussi sauver l'extraction :
+  // log(`📤 Prépare upload Drive - extraction: ${eFile.name} (${fmtBytes(eFile.size)})`);
+  // extractB64 = await fileToBase64(eFile);
+}
+
+const payload = {
+  secret,
+  sheetId: SHEET_ID,
+  resultats: { headers: resultats.headers, rows: resultats.rows },
+  ml: { headers: ml.headers, rows: ml.rows },
+  // === Drive upload ===
+  saveSuivi: true, // mettre à false si tu ne veux pas uploader
+  suiviFile: suiviB64 ? { name: sFile.name, mime: sFile.type || 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet', base64: suiviB64 } : null,
+  // saveExtraction: true,
+  // extractionFile: extractB64 ? { name: eFile.name, mime: eFile.type || 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet', base64: extractB64 } : null,
+};
+
+    
+    
 
     log('Envoi vers Google Sheets (Apps Script)…');
     await fetch(GAS_URL, {
