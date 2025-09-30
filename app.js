@@ -14,7 +14,7 @@ window.addEventListener('unhandledrejection', (e) => log('⛔ Promise rejection:
 
 // --- Config fixe ---
 const SHEET_ID = '1AptbV2NbY0WQZpe_Xt1K2iVlDpgKADElamKQCg3GcXQ';
-const GAS_URL  = 'https://script.google.com/macros/s/AKfycbwO0P3Yo5kw9PPriJPXzUMipBrzlGTR_r-Ff6OyEUnsNu-I9q-rESbBq7l2m6KLA3RJ/exec'; // <— remplace
+const GAS_URL  = 'https://script.google.com/macros/s/AKfycbwO0P3Yo5kw9PPriJPXzUMipBrzlGTR_r-Ff6OyEUnsNu-I9q-rESbBq7l2m6KLA3RJ/exec'; // <— remplace par ton /exec
 
 // (optionnel) mémoriser le secret
 document.addEventListener('DOMContentLoaded', () => {
@@ -28,13 +28,13 @@ document.addEventListener('DOMContentLoaded', () => {
   if ($('secret')) $('secret').addEventListener('change', e => localStorage.setItem('PWA_SECRET', e.target.value));
 });
 
-// Test GET (peut échouer à cause de CORS ; juste indicatif)
+// Test GET (indicatif ; en no-cors la réponse est opaque)
 async function testConnexion(){
   try{
     if(!GAS_URL) { alert('Définis GAS_URL dans app.js'); return; }
     log('Ping Apps Script…');
-    const r = await fetch(GAS_URL, { method:'GET', mode:'no-cors' });
-    log('GET envoyé (no-cors). Si besoin, vérifie dans Apps Script > Exécutions.');
+    await fetch(GAS_URL, { method:'GET', mode:'no-cors' });
+    log('GET envoyé (no-cors). Vérifie Apps Script > Exécutions si besoin.');
   }catch(e){ log('❌ Test: ' + e.message); alert(e.message); }
 }
 
@@ -56,16 +56,31 @@ async function onRun() {
     const sWorkbook = await readWorkbook(sFile);
     const eWorkbook = await readWorkbook(eFile);
 
-    log('Nettoyage & calcul tableaux (suivi / extraction)…');
     const s1904 = getWorkbookDate1904(sWorkbook);
-const e1904 = getWorkbookDate1904(eWorkbook);
+    const e1904 = getWorkbookDate1904(eWorkbook);
+    log(`ℹ️ Suivi : date1904=${s1904 ? 'TRUE' : 'FALSE'}`);
+    log(`ℹ️ Extraction : date1904=${e1904 ? 'TRUE' : 'FALSE'}`);
 
-const sData = processWorkbook(sWorkbook, { key:'s_key', user:'s_user', sum:'s_sum', date:'s_date', head:'s_head' }, s1904);
-const eData = processWorkbook(eWorkbook, { key:'e_key', user:'e_user', sum:'e_sum', date:'e_date', head:'e_head' }, e1904);
+    log('Nettoyage & calcul tableaux (suivi / extraction)…');
+    const sData = processWorkbook(sWorkbook, { key:'s_key', user:'s_user', sum:'s_sum', date:'s_date' }, s1904);
+    const eData = processWorkbook(eWorkbook, { key:'e_key', user:'e_user', sum:'e_sum', date:'e_date' }, e1904);
+
+    // Logs "dernier jour"
+    logLastDay('Suivi', sData.tableau);
+    logLastDay('Extraction', eData.tableau);
 
     log('Calcul resultats (addition alignée)…');
     const resultats = mergeTablesByContactAndHeaders(sData.tableau, eData.tableau);
     const ml = multiplyValues(resultats, 0.35);
+
+    // Pré-contrôle pour éviter d’écraser le Sheet si vide
+    const dayCount = (resultats.headers?.length || 1) - 1;
+    const rowCount = (resultats.rows?.length || 0);
+    log(`🧪 Pré-contrôle → contacts: ${rowCount}, jours: ${dayCount}`);
+    if (dayCount <= 0 || rowCount <= 0) {
+      alert("Aucune donnée exploitable détectée (0 jour ou 0 contact). Envoi annulé pour ne pas vider le Google Sheet.");
+      return;
+    }
 
     const payload = {
       secret,
@@ -78,7 +93,7 @@ const eData = processWorkbook(eWorkbook, { key:'e_key', user:'e_user', sum:'e_su
     // IMPORTANT: no-cors => on n’essaie pas de lire la réponse
     await fetch(GAS_URL, {
       method: 'POST',
-      mode: 'no-cors',             // <-- évite CORS; la réponse est "opaque"
+      mode: 'no-cors',
       redirect: 'follow',
       credentials: 'omit',
       headers: { 'Content-Type': 'text/plain;charset=utf-8' },
@@ -110,24 +125,7 @@ function getWorkbookDate1904(workbook){
   catch { return false; }
 }
 
-// Petit log de contrôle du dernier jour
-function debugLastDay(label, perDayMap){
-  try{
-    const days = Array.from(new Set(Array.from(perDayMap.keys()).map(k => k.split('||')[1]))).sort();
-    if (!days.length) { log(`ℹ️ ${label}: aucune date détectée`); return; }
-    const last = days[days.length - 1];
-    let total = 0, count = 0;
-    for (const [k, v] of perDayMap.entries()) {
-      const d = k.split('||')[1];
-      if (d === last) { total += Number(v||0); count++; }
-    }
-    log(`ℹ️ ${label} – dernier jour: ${last} | total=${total} | occurrences=${count}`);
-  }catch(e){}
-}
-
-
-
-// 1ère feuille → AOA ; supprime entête dupliquée ; supprime dernière ligne UNIQUEMENT si c’est un TOTAL
+// 1ère feuille → AOA ; supprime entête dupliquée ; supprime dernière ligne UNIQUEMENT si elle contient "total"
 function cleanSheetToAOA(workbook) {
   const firstName = workbook.SheetNames[0];
   const sheet = workbook.Sheets[firstName];
@@ -142,27 +140,17 @@ function cleanSheetToAOA(workbook) {
     if (arraysEqual(header, firstDataRow)) aoa.splice(1, 1);
   }
 
-  // détecter si la dernière ligne est un TOTAL (cherche "total" dans TOUTE la ligne)
+  // ne supprime la dernière ligne que s'il y a clairement "total" quelque part
   if (aoa.length >= 2) {
     const last = aoa[aoa.length - 1];
     const hasTotalWord = last.some(cell => {
       const s = (cell==null ? '' : String(cell)).trim().toLowerCase();
       return /(^|[^a-z])total(s)?([^a-z]|$)|totaux|somme|sum|grand total|subtotal/.test(s);
     });
-
-    let numericCount = 0, nonEmptyCount = 0;
-    for (let i = 0; i < last.length; i++) {
-      const v = last[i];
-      if (v !== null && v !== '') nonEmptyCount++;
-      const n = typeof v === 'number' ? v : Number(String(v).replace(/\s/g,'').replace(',', '.'));
-      if (!isNaN(n)) numericCount++;
-    }
-    const looksLikeTotalsRow = hasTotalWord || (numericCount >= Math.max(1, nonEmptyCount - 1) && nonEmptyCount > 0);
-    if (looksLikeTotalsRow) aoa.splice(aoa.length - 1, 1);
+    if (hasTotalWord) aoa.splice(aoa.length - 1, 1);
   }
   return aoa;
 }
-
 function arraysEqual(a,b){ return a.length===b.length && a.every((v,i)=>String(v).trim()===String(b[i]).trim()); }
 function aoaToObjects(aoa){
   if(!aoa || !aoa.length) return [];
@@ -173,10 +161,7 @@ function aoaToObjects(aoa){
 // ======================
 // Traitements principaux
 // ======================
-// AVANT : function processWorkbook(workbook, refs) {
-// APRÈS :
 function processWorkbook(workbook, refs, is1904=false) {
-
   const aoa = cleanSheetToAOA(workbook);
   const rows = aoaToObjects(aoa);
   if (!rows.length) return { tableau: emptyTable() };
@@ -188,29 +173,26 @@ function processWorkbook(workbook, refs, is1904=false) {
   const colSum  = colByLetter('sum');
   const colDate = colByLetter('date');
 
-  // Dédoublonnage (garde le 1er)
+  // Dédoublonnage (garde le 1er). Si la clé est vide → on NE dédoublonne PAS.
   const seen = new Set(); 
-const dedupe = [];
-for (const r of rows) {
-  const kRaw = r[colKey];
-  const k = (kRaw == null ? '' : String(kRaw)).trim();
-  if (!k) {
-    // pas de clé → on garde la ligne telle quelle (pas de dédoublonnage)
-    dedupe.push(r);
-  } else if (!seen.has(k)) {
-    seen.add(k);
-    dedupe.push(r);
+  const dedupe = [];
+  for (const r of rows) {
+    const kRaw = r[colKey];
+    const k = (kRaw == null ? '' : String(kRaw)).trim();
+    if (!k) {
+      dedupe.push(r);
+    } else if (!seen.has(k)) {
+      seen.add(k);
+      dedupe.push(r);
+    }
   }
-}
 
   // Agrégation par jour (date = colDate tronquée AAAA-MM-JJ)
   const perDayMap = new Map(); const usersSet = new Set(); const daysSet = new Set();
   for (const r of dedupe) {
     const u = (r[colUser]==null ? '' : String(r[colUser])).trim(); // normalisation Contact
     usersSet.add(u);
-    // AVANT : const d = parseDate(r[colDate]);
-const d = parseDate(r[colDate], is1904);
-
+    const d = parseDate(r[colDate], is1904); if (!d) continue; daysSet.add(d);
     const val = parseNumber(r[colSum]); // parsing FR robuste
     const key = `${u}||${d}`;
     perDayMap.set(key, (perDayMap.get(key)||0) + val);
@@ -226,7 +208,6 @@ const d = parseDate(r[colDate], is1904);
     for (const d of days) row.push(perDayMap.get(`${u}||${d}`) || 0);
     rowsOut.push(row);
   }
-  debugLastDay('Process', perDayMap); // journalise le dernier jour pour ce fichier
 
   return { tableau: { headers: headersOut, rows: rowsOut } };
 }
@@ -303,12 +284,13 @@ function parseNumber(v){
   return isNaN(n) ? 0 : n;
 }
 
+// Convertit en AAAA-MM-JJ ; gère ISO, JJ/MM/AAAA (±heure) et numéros Excel (1900 & 1904)
 function parseDate(v, date1904=false) {
   if (v == null || v === '') return null;
 
   // Numéro Excel
   if (typeof v === 'number' && isFinite(v)) {
-    // Ajuste pour 1904 si nécessaire (+1462 jours)
+    // Ajuste pour base 1904 si nécessaire (+1462 jours)
     const serial = date1904 ? (v + 1462) : v;
     const ms = Math.round((serial - 25569) * 86400 * 1000); // base Excel 1899-12-30
     const d = new Date(ms);
@@ -336,8 +318,21 @@ function parseDate(v, date1904=false) {
   const d = new Date(v);
   return isNaN(d) ? null : fmtYMD(d);
 }
-
 function fmtYMD(d){ const y=d.getFullYear(), m=String(d.getMonth()+1).padStart(2,'0'), day=String(d.getDate()).padStart(2,'0'); return `${y}-${m}-${day}`; }
+
+// --- Aide: log dernier jour pour un tableau type {headers, rows}
+function logLastDay(label, table){
+  try{
+    const headers = table?.headers || [];
+    const days = headers.slice(1);
+    if (!days.length) { log(`ℹ️ ${label}: aucune date détectée`); return; }
+    const last = days[days.length-1];
+    const idx = headers.indexOf(last);
+    let total = 0;
+    for (const r of (table?.rows || [])) total += Number(r[idx] || 0);
+    log(`ℹ️ ${label} – dernier jour: ${last} | total=${total}`);
+  }catch(e){}
+}
 
 // Expose global (fallback onclick dans index.html)
 window.onRun = onRun;
