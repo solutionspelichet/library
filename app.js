@@ -162,12 +162,44 @@ function aoaToObjects(aoa){
 // ======================
 // Traitements principaux
 // ======================
+
+
+function normContact(s){
+  return (s==null ? '' : String(s))
+    .normalize('NFKC')        // homogénéise accents/ligatures
+    .replace(/\s+/g,' ')      // compresse espaces
+    .trim()
+    .toLocaleUpperCase('fr-FR'); // casse insensible
+}
+
+function logProcessSummary(label, summary){
+  const { rowsRead, rowsAfterClean, rowsAfterDedupe, daysCount, first5Days, last5Days, totalSum } = summary;
+  log(`📊 ${label} | lus=${rowsRead} | après nettoyage=${rowsAfterClean} | après dédoublonnage=${rowsAfterDedupe} | jours=${daysCount} | total=${totalSum}`);
+  log(`   premiers jours: ${first5Days.join(', ')}`);
+  log(`   derniers  jours: ${last5Days.join(', ')}`);
+}
+
+
+
 function processWorkbook(workbook, refs, is1904=false) {
   const aoa = cleanSheetToAOA(workbook);
   const rows = aoaToObjects(aoa);
   if (!rows.length) return { tableau: emptyTable() };
 
   const headers = aoa[0];
+  function colNameByLetter(letter){
+  const idx = excelLetterToIndex($(letter).value);
+  if (idx < 0 || idx >= headers.length) {
+    throw new Error(`Lettre colonne hors plage: ${$(letter).value} (headers=${headers.length})`);
+  }
+  return headers[idx];
+}
+
+const colKey  = colNameByLetter(refs.key);
+const colUser = colNameByLetter(refs.user);
+const colSum  = colNameByLetter(refs.sum);
+const colDate = colNameByLetter(refs.date);
+
   const colByLetter = (L) => headers[excelLetterToIndex($(refs[L]).value)];
   const colKey  = colByLetter('key');
   const colUser = colByLetter('user');
@@ -191,7 +223,7 @@ function processWorkbook(workbook, refs, is1904=false) {
   // Agrégation par jour (date = colDate tronquée AAAA-MM-JJ)
   const perDayMap = new Map(); const usersSet = new Set(); const daysSet = new Set();
   for (const r of dedupe) {
-    const u = (r[colUser]==null ? '' : String(r[colUser])).trim(); // normalisation Contact
+    const u = normContact(r[colUser]); // normalisation Contact
     usersSet.add(u);
     const d = parseDate(r[colDate], is1904); if (!d) continue; daysSet.add(d);
     const val = parseNumber(r[colSum]); // parsing FR robuste
@@ -209,6 +241,16 @@ function processWorkbook(workbook, refs, is1904=false) {
     for (const d of days) row.push(perDayMap.get(`${u}||${d}`) || 0);
     rowsOut.push(row);
   }
+  const summary = {
+  rowsRead: (rows?.length || 0),
+  rowsAfterClean: (rows?.length || 0),           // ici rows = après cleanSheetToAOA + mapping
+  rowsAfterDedupe: dedupe.length,
+  daysCount: days.length,
+  first5Days: days.slice(0,5),
+  last5Days: days.slice(-5),
+  totalSum: Array.from(perDayMap.values()).reduce((a,b)=>a+Number(b||0),0)
+};
+logProcessSummary(headers === (aoa?.[0]||[] ) ? 'Fichier' : 'Fichier', summary);
 
   return { tableau: { headers: headersOut, rows: rowsOut } };
 }
@@ -230,7 +272,7 @@ function mergeTablesByContactAndHeaders(A, B) {
   const ci = headers.indexOf('Contact'); if (ci>0){ headers.splice(ci,1); headers.unshift('Contact'); }
 
   const idxA = indexMap(A.headers||[]), idxB = indexMap(B.headers||[]);
-  const norm = (s) => (s==null ? '' : String(s)).trim();
+  const norm = (s) => normContact(s);
 
   const contacts = new Set([...(A.rows||[]).map(r=>norm(r[0])), ...(B.rows||[]).map(r=>norm(r[0]))]);
   const mapA = new Map(); (A.rows||[]).forEach(r => mapA.set(norm(r[0]), r));
