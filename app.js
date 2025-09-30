@@ -81,6 +81,7 @@ async function onRun() {
       alert("Aucune donnée exploitable détectée (0 jour ou 0 contact). Envoi annulé pour ne pas vider le Google Sheet.");
       return;
     }
+    log(`[LOCAL] s.rows=${(sData.tableau.rows||[]).length} e.rows=${(eData.tableau.rows||[]).length}`);
 
     const payload = {
       secret,
